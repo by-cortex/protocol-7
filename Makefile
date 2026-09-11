@@ -1,5 +1,5 @@
 CC        ?= gcc
-CFLAGS    := -Wall -Wextra -Werror -pedantic -std=c11 -g -Iinclude -MMD -MP
+CFLAGS    := -Wall -Wextra -Werror -pedantic -std=c11 -g -Iinclude -MMD -MP -D_POSIX_C_SOURCE=200809L
 SANFLAGS  := -fsanitize=address,undefined -fno-omit-frame-pointer
 LDFLAGS   :=
 
