@@ -1,0 +1,33 @@
+# Build & Bin
+*.o
+*.a
+*.so
+protocol7
+protocol7-sanitized
+
+# Nix & Direnv
+.direnv/
+result
+result-*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# LSP / Tooling
+.cache/
+.clangd/
+build/
+build-sanitize/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc
