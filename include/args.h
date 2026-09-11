@@ -15,12 +15,17 @@ typedef struct {
   const char *help;
 } p7_option_t;
 
+typedef enum { P7_MODE_NONE, P7_MODE_SEND, P7_MODE_RECV } p7_mode_t;
+
 typedef struct {
+  p7_mode_t mode;
   const char *host;
   int port;
 } p7_config_t;
 
 static const p7_option_t p7_otions[] = {
+    {"send", 's', no_argument, "send flag"},
+    {"recv", 'r', no_argument, "recv flag"},
     {"host", 'H', required_argument, "host flag"},
     {"port", 'p', required_argument, "port flag"},
     {"help", 'h', no_argument, "this message"}};
