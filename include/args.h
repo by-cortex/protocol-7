@@ -3,6 +3,9 @@
 
 #include <getopt.h>
 
+#define P7_DEFAULT_HOST "127.0.0.1"
+#define P7_DEFAULT_PORT 6767
+
 #define P7_NUM_OPTIONS ((sizeof(p7_otions)) / (sizeof(p7_otions[0])))
 
 typedef struct {
@@ -11,6 +14,11 @@ typedef struct {
   int has_arg;
   const char *help;
 } p7_option_t;
+
+typedef struct {
+  const char *host;
+  int port;
+} p7_config_t;
 
 static const p7_option_t p7_otions[] = {
     {"host", 'H', required_argument, "host flag"},
