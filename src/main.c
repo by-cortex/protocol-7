@@ -2,7 +2,9 @@
 #include "receiver.h"
 #include "sender.h"
 #include "socket_utils.h"
+#include <bits/getopt_core.h>
 #include <getopt.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -34,6 +36,9 @@ int main(int argc, char *argv[]) {
     case 'p':
       cfg.port = atoi(optarg);
       break;
+    case 'f':
+      cfg.file = optarg;
+      break;
     case 'h':
       p7_print_help(argv[0]);
       return 0;
@@ -48,12 +53,17 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  if (cfg.mode == P7_MODE_SEND && cfg.file == NULL) {
+    fprintf(stderr, "error: --send requires --file\n");
+    return 1;
+  }
+
   int sock = p7_init_socket(&addr, cfg);
   if (sock < 0) {
     return 1;
   }
 
-  int rc = (cfg.mode == P7_MODE_SEND) ? p7_run_sender(sock, &addr)
+  int rc = (cfg.mode == P7_MODE_SEND) ? p7_run_sender(sock, &addr, cfg)
                                       : p7_run_receiver(sock, &addr);
   close(sock);
   return rc == 0 ? 0 : 1;

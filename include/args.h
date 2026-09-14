@@ -21,14 +21,17 @@ typedef struct {
   p7_mode_t mode;
   const char *host;
   int port;
+  const char *file;
 } p7_config_t;
 
 static const p7_option_t p7_otions[] = {
-    {"send", 's', no_argument, "send flag"},
-    {"recv", 'r', no_argument, "recv flag"},
-    {"host", 'H', required_argument, "host flag"},
-    {"port", 'p', required_argument, "port flag"},
-    {"help", 'h', no_argument, "this message"}};
+    {"send", 's', no_argument, "run as sender"},
+    {"recv", 'r', no_argument, "run as receiver"},
+    {"host", 'H', required_argument, "destination host (default 127.0.0.1)"},
+    {"port", 'p', required_argument, "UDP port"},
+    {"help", 'h', no_argument, "show this help"},
+    {"file", 'f', required_argument,
+     "file to send (send mode) or write to (recv mode, default: stdout)"}};
 
 void p7_build_getopt_tables(char optstring[], struct option long_opts[]);
 void p7_print_help(const char *prog);
