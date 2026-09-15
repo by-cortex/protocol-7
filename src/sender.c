@@ -1,12 +1,27 @@
 #include "sender.h"
+#include "header.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/socket.h>
+#include <time.h>
+
+static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b) {
+  uint8_t *tmp = *buff_a;
+  *buff_a = *buff_b;
+  *buff_b = tmp;
+}
 
 int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
                   p7_config_t cfg) {
-  uint8_t chunk[1024];
+  uint8_t buffer_a[P7_HEADER_SIZE + P7_MSS] = {0};
+  uint8_t buffer_b[P7_HEADER_SIZE + P7_MSS] = {0};
+  uint8_t *current = buffer_a;
+  uint8_t *previous = buffer_b;
+  int is_previous = 0;
   size_t bytes_read = 0;
+  size_t previous_bytes_read = 0;
+  p7_header_t header = {0};
 
   FILE *fp = fopen(cfg.file, "rb");
   if (fp == NULL) {
@@ -14,15 +29,34 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
     return -1;
   }
 
-  while ((bytes_read = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
-    if ((sendto(sock_fd, chunk, bytes_read, 0, (struct sockaddr *)sender_addr,
-                sizeof(*sender_addr))) < 0) {
+  while ((bytes_read = fread(current + P7_HEADER_SIZE, 1, P7_MSS, fp)) > 0) {
+    swap_ptr(&current, &previous);
+    if (is_previous == 0) {
+      previous_bytes_read = bytes_read;
+      is_previous = 1;
+      continue;
+    }
+
+    p7_serialize_header(&header, previous, P7_HEADER_SIZE + P7_MSS);
+    if ((sendto(sock_fd, previous, P7_HEADER_SIZE + previous_bytes_read, 0,
+                (struct sockaddr *)sender_addr, sizeof(*sender_addr))) < 0) {
       perror("Send UDP datagram failed");
       return -1;
     }
+    previous_bytes_read = bytes_read;
   }
 
   if (feof(fp)) {
+    header.flags = (1 << 3);
+    fprintf(stderr, "DEBUG flag=%02x bytes_read=%d previous_bytes_read=%d\n",
+            header.flags, (int)bytes_read, (int)previous_bytes_read);
+    p7_serialize_header(&header, previous, P7_HEADER_SIZE + P7_MSS);
+    if ((sendto(sock_fd, previous, P7_HEADER_SIZE + previous_bytes_read, 0,
+                (struct sockaddr *)sender_addr, sizeof(*sender_addr))) < 0) {
+      perror("Send UDP datagram failed");
+      return -1;
+    }
+
     fclose(fp);
     printf("[Sender] Success file transfer!\n");
     return 0;

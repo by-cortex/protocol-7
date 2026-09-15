@@ -6,6 +6,12 @@
 
 #define P7_HEADER_SIZE 12
 
+#define P7_MTU 1500
+#define P7_UDP_HEADER_SIZE 8
+#define P7_IP_HEADER_SIZE 20
+#define P7_MSS                                                                 \
+  (P7_MTU - P7_UDP_HEADER_SIZE - P7_IP_HEADER_SIZE - P7_HEADER_SIZE)
+
 typedef struct {
   uint32_t seq_num;
   uint32_t ack_num;
