@@ -13,7 +13,7 @@ static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b) {
 }
 
 int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
-                  p7_config_t cfg) {
+                  p7_config_t *cfg) {
   uint8_t buffer_a[P7_HEADER_SIZE + P7_MSS] = {0};
   uint8_t buffer_b[P7_HEADER_SIZE + P7_MSS] = {0};
   uint8_t *current = buffer_a;
@@ -23,7 +23,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
   size_t previous_bytes_read = 0;
   p7_header_t header = {0};
 
-  FILE *fp = fopen(cfg.file, "rb");
+  FILE *fp = fopen(cfg->file, "rb");
   if (fp == NULL) {
     perror("fopen");
     return -1;

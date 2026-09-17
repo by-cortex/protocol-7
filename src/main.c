@@ -63,7 +63,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  int rc = (cfg.mode == P7_MODE_SEND) ? p7_run_sender(sock, &addr, cfg)
+  int rc = (cfg.mode == P7_MODE_SEND) ? p7_run_sender(sock, &addr, &cfg)
                                       : p7_run_receiver(sock, &addr, &cfg);
   close(sock);
   return rc == 0 ? 0 : 1;
