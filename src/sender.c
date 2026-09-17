@@ -48,7 +48,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
   }
 
   if (feof(fp)) {
-    header.flags |= P7_FIN_OFFSET;
+    header.flags |= P7_FIN_MASK;
     p7_serialize_header(&header, previous, P7_HEADER_SIZE + P7_MSS);
     if ((sendto(sock_fd, previous, P7_HEADER_SIZE + previous_bytes_read, 0,
                 (struct sockaddr *)sender_addr, sizeof(*sender_addr))) < 0) {

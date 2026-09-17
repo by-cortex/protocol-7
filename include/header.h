@@ -12,10 +12,10 @@
 #define P7_MSS                                                                 \
   (P7_MTU - P7_UDP_HEADER_SIZE - P7_IP_HEADER_SIZE - P7_HEADER_SIZE)
 
-#define P7_SYN_OFFSET 0x01
-#define P7_ACK_OFFSET 0x02
-#define P7_FIN_OFFSET 0x04
-#define P7_RST_OFFSET 0x08
+#define P7_SYN_MASK 0x01
+#define P7_ACK_MASK 0x02
+#define P7_FIN_MASK 0x04
+#define P7_RST_MASK 0x08
 
 typedef struct {
   uint32_t seq_num;

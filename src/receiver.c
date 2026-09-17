@@ -28,7 +28,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *receiver_addr,
     return -1;
   }
 
-  while (!(header.flags & P7_FIN_OFFSET)) {
+  while (!(header.flags & P7_FIN_MASK)) {
     ssize_t bytes_received =
         recvfrom(sock_fd, buffer, sizeof(buffer), 0,
                  (struct sockaddr *)receiver_addr, &receiver_addr_len);
