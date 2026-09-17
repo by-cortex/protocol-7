@@ -4,6 +4,7 @@
 *.so
 protocol7
 protocol7-sanitized
+test.txt
 
 # Nix & Direnv
 .direnv/
