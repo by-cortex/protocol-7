@@ -26,5 +26,7 @@ typedef struct {
 
 int p7_serialize_header(const p7_header_t *header, uint8_t *buffer,
                         size_t buffer_size);
+int p7_deserialize_header(p7_header_t *header, const uint8_t *buffer,
+                          size_t buffer_size);
 
 #endif // HEADER_H

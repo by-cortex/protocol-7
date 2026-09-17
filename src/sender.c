@@ -30,8 +30,8 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
   }
 
   while ((bytes_read = fread(current + P7_HEADER_SIZE, 1, P7_MSS, fp)) > 0) {
-    swap_ptr(&current, &previous);
     if (is_previous == 0) {
+      swap_ptr(&current, &previous);
       previous_bytes_read = bytes_read;
       is_previous = 1;
       continue;
@@ -43,6 +43,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
       perror("Send UDP datagram failed");
       return -1;
     }
+    swap_ptr(&current, &previous);
     previous_bytes_read = bytes_read;
   }
 
