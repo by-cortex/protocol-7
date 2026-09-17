@@ -17,7 +17,7 @@ SAN_OBJS  := $(SRCS:$(SRC_DIR)/%.c=$(SAN_BUILD_DIR)/%.o)
 DEPS      := $(OBJS:.o=.d) $(SAN_OBJS:.o=.d)
 -include $(DEPS)
 
-.PHONY: all clean run valgrind compiledb sanitize
+.PHONY: all clean recv send valgrind-recv valgrind-send compiledb sanitize
 
 all: $(TARGET)
 
@@ -41,11 +41,17 @@ $(SAN_BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(SAN_BUILD_DIR)
 $(SAN_BUILD_DIR):
 	mkdir -p $(SAN_BUILD_DIR)
 
-run: $(TARGET)
-	./$(TARGET)
+recv: $(TARGET)
+	./$(TARGET) -r
 
-valgrind: $(TARGET)
-	valgrind --leak-check=full --track-origins=yes ./$(TARGET)
+send: $(TARGET)
+	./$(TARGET) -s -f ./test.txt
+
+valgrind-recv: $(TARGET)
+	valgrind --leak-check=full --track-origins=yes ./$(TARGET) -r
+
+valgrind-send: $(TARGET)
+	valgrind --leak-check=full --track-origins=yes ./$(TARGET) -s -f ./test.txt
 
 compiledb: clean
 	bear -- make all
