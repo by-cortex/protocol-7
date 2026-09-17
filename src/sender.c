@@ -23,6 +23,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
   size_t bytes_read = 0;
   size_t previous_bytes_read = 0;
   p7_header_t header = {0};
+  uint32_t seq_num = 0;
 
   FILE *fp = fopen(cfg->file, "rb");
   if (fp == NULL) {
@@ -45,6 +46,9 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
       return -1;
     }
 
+    seq_num += previous_bytes_read;
+    header.seq_num = seq_num;
+
     if (cfg->hex == 1) {
       p7_print_hex_dump(previous, previous_bytes_read);
     }
@@ -61,6 +65,9 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
       perror("Send UDP datagram failed");
       return -1;
     }
+
+    seq_num += previous_bytes_read;
+    header.seq_num = seq_num;
 
     if (cfg->hex == 1) {
       p7_print_hex_dump(previous, previous_bytes_read);
