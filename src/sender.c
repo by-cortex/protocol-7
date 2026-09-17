@@ -1,4 +1,5 @@
 #include "sender.h"
+#include "debug.h"
 #include "header.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -43,6 +44,11 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
       perror("Send UDP datagram failed");
       return -1;
     }
+
+    if (cfg->hex == 1) {
+      p7_print_hex_dump(previous, previous_bytes_read);
+    }
+
     swap_ptr(&current, &previous);
     previous_bytes_read = bytes_read;
   }
@@ -54,6 +60,10 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *sender_addr,
                 (struct sockaddr *)sender_addr, sizeof(*sender_addr))) < 0) {
       perror("Send UDP datagram failed");
       return -1;
+    }
+
+    if (cfg->hex == 1) {
+      p7_print_hex_dump(previous, previous_bytes_read);
     }
 
     fclose(fp);

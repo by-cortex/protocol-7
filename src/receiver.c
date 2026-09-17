@@ -1,12 +1,11 @@
 #include "receiver.h"
 #include "args.h"
+#include "debug.h"
 #include "header.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-
-static void print_hex_dump(const uint8_t *buffer, ssize_t buffer_len);
 
 int p7_run_receiver(int sock_fd, struct sockaddr_in *receiver_addr,
                     p7_config_t *cfg) {
@@ -39,7 +38,9 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *receiver_addr,
     }
     p7_deserialize_header(&header, buffer, bytes_received);
 
-    print_hex_dump(buffer, bytes_received);
+    if (cfg->hex == 1) {
+      p7_print_hex_dump(buffer, bytes_received);
+    }
     if (cfg->file != NULL) {
       fwrite(buffer + P7_HEADER_SIZE, 1, bytes_received - P7_HEADER_SIZE, fp);
       memset(buffer, 0, sizeof(buffer));
@@ -48,23 +49,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *receiver_addr,
   if (cfg->file != NULL) {
     fclose(fp);
   }
+  printf("[Receiver] Success file transfer!\n");
 
   return 0;
-}
-
-static void print_hex_dump(const uint8_t *buffer, ssize_t buffer_len) {
-  fprintf(stderr, "--- HEADER ---\n");
-  for (int i = 0; i < P7_HEADER_SIZE; i++) {
-    fprintf(stderr, "%02x ", buffer[i]);
-    if ((i + 1) % 12 == 0 && i != 0)
-      fprintf(stderr, "\n");
-  }
-
-  fprintf(stderr, "\n\n--- PAYLOAD ---\n");
-  for (int i = P7_HEADER_SIZE; i < (int)buffer_len; i++) {
-    fprintf(stderr, "%02x ", buffer[i]);
-    if ((i + 1) % 12 == 0 && i != 0)
-      fprintf(stderr, "\n");
-  }
-  fprintf(stderr, "\n\n");
 }

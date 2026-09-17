@@ -20,6 +20,7 @@ int main(int argc, char *argv[]) {
   cfg.mode = P7_MODE_NONE;
   cfg.host = P7_DEFAULT_HOST;
   cfg.port = P7_DEFAULT_PORT;
+  cfg.hex = 0;
 
   int opt;
   while ((opt = getopt_long(argc, argv, optstring, long_opts, NULL)) != -1) {
@@ -35,6 +36,9 @@ int main(int argc, char *argv[]) {
       break;
     case 'p':
       cfg.port = atoi(optarg);
+      break;
+    case 'x':
+      cfg.hex = 1;
       break;
     case 'f':
       cfg.file = optarg;
