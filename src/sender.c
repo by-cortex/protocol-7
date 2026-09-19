@@ -3,15 +3,19 @@
 #include "debug.h"
 #include "header.h"
 #include "socket_utils.h"
+#include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <time.h>
 
 static int p7_send_segment(p7_session_t *session, p7_header_t *header,
                            uint8_t *previous, size_t previous_bytes_read,
                            uint32_t *seq_num, p7_config_t *cfg);
+static int p7_recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
+                               size_t recv_buffer_len, p7_config_t *cfg);
 static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b);
 
 int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
@@ -26,6 +30,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
   p7_header_t header = {0};
   p7_session_t session = {0};
   uint32_t seq_num = 0;
+  uint8_t recv_buffer[P7_HEADER_SIZE + P7_MSS] = {0};
 
   session.sock_fd = sock_fd;
   session.addr = dest_addr;
@@ -52,12 +57,23 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
     }
     swap_ptr(&current, &previous);
     previous_bytes_read = bytes_read;
+
+    if (p7_recv_ack_segment(&session, recv_buffer, sizeof(recv_buffer), cfg) <
+        0) {
+      fclose(fp);
+      return -1;
+    }
   }
 
   if (feof(fp)) {
     header.flags |= P7_FIN_MASK;
     if (p7_send_segment(&session, &header, previous, previous_bytes_read,
                         &seq_num, cfg) < 0) {
+      fclose(fp);
+      return -1;
+    }
+    if (p7_recv_ack_segment(&session, recv_buffer, sizeof(recv_buffer), cfg) <
+        0) {
       fclose(fp);
       return -1;
     }
@@ -70,6 +86,25 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
     fclose(fp);
     return -1;
   }
+  return 0;
+}
+
+static int p7_recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
+                               size_t recv_buffer_len, p7_config_t *cfg) {
+  struct sockaddr_in ack_from_addr;
+  socklen_t ack_from_addr_len = sizeof(ack_from_addr);
+
+  ssize_t bytes_received =
+      recvfrom(session->sock_fd, recv_buffer, recv_buffer_len, 0,
+               (struct sockaddr *)&ack_from_addr, &ack_from_addr_len);
+  if (bytes_received < 0) {
+    perror("Sender recv data failed");
+    return -1;
+  }
+  if (cfg->hex == 1) {
+    p7_print_hex_dump(recv_buffer, bytes_received);
+  }
+
   return 0;
 }
 
