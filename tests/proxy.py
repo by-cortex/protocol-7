@@ -5,11 +5,12 @@ from random import random
 DROP_PACKETS_PERCENT = 30
 
 
-def run_mock_proxy_server(port: int, dst_port: int, mode: str) -> None:
+def run_mock_proxy_server(proxy_port: int, dest_port: int, mode: str) -> None:
+    src_port = 0
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("127.0.0.1", port))
+    sock.bind(("127.0.0.1", proxy_port))
     print(
-        f"[PROXY] Server running on 127.0.0.1:{port} to 127.0.0.1:{dst_port} with {mode} mode..."
+        f"[PROXY] Server running: 127.0.0.1:{proxy_port} - 127.0.0.1:{dest_port} with {mode} mode..."
     )
 
     request_count = 0
@@ -26,10 +27,17 @@ def run_mock_proxy_server(port: int, dst_port: int, mode: str) -> None:
                     print(f"[DROP] {get_log_info(request_count, data, addr)} -> X")
                     continue
 
-        sock.sendto(data, ("127.0.0.1", dst_port))
-        print(
-            f"[PROXY] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{dst_port}"
-        )
+        if addr[1] != dest_port:
+            src_port = addr[1]
+            sock.sendto(data, ("127.0.0.1", dest_port))
+            print(
+                f"[PROXY] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{dest_port}"
+            )
+        else:
+            sock.sendto(data, ("127.0.0.1", src_port))
+            print(
+                f"[PROXY] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{src_port}"
+            )
 
 
 def get_log_info(request_count: int, data: bytes, addr: tuple) -> str:
@@ -38,8 +46,8 @@ def get_log_info(request_count: int, data: bytes, addr: tuple) -> str:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-p", "--port", type=int, default=5656)
-    parser.add_argument("-d", "--dport", type=int, default=6767)
+    parser.add_argument("-p", "--aport", type=int, default=5656)
+    parser.add_argument("-d", "--bport", type=int, default=6767)
     parser.add_argument("-m", "--mode", choices=["normal", "drop"], default="normal")
     args = parser.parse_args()
-    run_mock_proxy_server(args.port, args.dport, args.mode)
+    run_mock_proxy_server(args.aport, args.bport, args.mode)
