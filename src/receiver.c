@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 
 static int send_ack(p7_session_t *session, uint32_t ack_num);
 
@@ -51,6 +52,8 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
 
     p7_deserialize_header(&header, recv_buffer, bytes_received);
 
+    p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &peer_addr);
+
     if (cfg->hex == 1) {
       p7_print_hex_dump(recv_buffer, bytes_received);
     }
@@ -76,7 +79,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
 
 static int send_ack(p7_session_t *session, uint32_t ack_num) {
   uint8_t send_buffer[P7_HEADER_SIZE] = {0};
-  int bytes_sent = 0;
+  ssize_t bytes_sent = 0;
 
   p7_header_t header = {0};
   header.flags |= P7_ACK_MASK;
@@ -89,6 +92,8 @@ static int send_ack(p7_session_t *session, uint32_t ack_num) {
     perror("Send ACK failed");
     return -1;
   }
+
+  p7_log_segment(P7_SEND_DIRECTION, &header, bytes_sent, session->addr);
 
   return bytes_sent;
 }
