@@ -21,6 +21,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
   p7_header_t header = {0};
   p7_session_t session = {0};
   FILE *fp = NULL;
+  uint32_t ack_num = 0;
 
   session.sock_fd = sock_fd;
 
@@ -58,15 +59,18 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
       p7_print_hex_dump(recv_buffer, bytes_received);
     }
 
-    if ((send_ack(&session,
-                  header.seq_num + (bytes_received - P7_HEADER_SIZE))) < 0) {
-      return -1;
+    if (header.seq_num == ack_num) {
+      ack_num += bytes_received - P7_HEADER_SIZE;
+
+      if (cfg->file != NULL) {
+        fwrite(recv_buffer + P7_HEADER_SIZE, 1, bytes_received - P7_HEADER_SIZE,
+               fp);
+        memset(recv_buffer, 0, sizeof(recv_buffer));
+      }
     }
 
-    if (cfg->file != NULL) {
-      fwrite(recv_buffer + P7_HEADER_SIZE, 1, bytes_received - P7_HEADER_SIZE,
-             fp);
-      memset(recv_buffer, 0, sizeof(recv_buffer));
+    if ((send_ack(&session, ack_num)) < 0) {
+      return -1;
     }
   }
   if (cfg->file != NULL) {
