@@ -93,6 +93,7 @@ static int p7_recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
                                size_t recv_buffer_len, p7_config_t *cfg) {
   struct sockaddr_in ack_from_addr;
   socklen_t ack_from_addr_len = sizeof(ack_from_addr);
+  p7_header_t header = {0};
 
   ssize_t bytes_received =
       recvfrom(session->sock_fd, recv_buffer, recv_buffer_len, 0,
@@ -101,22 +102,31 @@ static int p7_recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
     perror("Sender recv data failed");
     return -1;
   }
+
+  p7_deserialize_header(&header, recv_buffer, recv_buffer_len);
+
+  p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &ack_from_addr);
+
   if (cfg->hex == 1) {
     p7_print_hex_dump(recv_buffer, bytes_received);
   }
-
   return 0;
 }
 
 static int p7_send_segment(p7_session_t *session, p7_header_t *header,
                            uint8_t *previous, size_t previous_bytes_read,
                            uint32_t *seq_num, p7_config_t *cfg) {
+  ssize_t bytes_sent = 0;
   p7_serialize_header(header, previous, P7_HEADER_SIZE + P7_MSS);
-  if ((sendto(session->sock_fd, previous, P7_HEADER_SIZE + previous_bytes_read,
-              0, (struct sockaddr *)session->addr, session->addr_len)) < 0) {
+  bytes_sent =
+      sendto(session->sock_fd, previous, P7_HEADER_SIZE + previous_bytes_read,
+             0, (struct sockaddr *)session->addr, session->addr_len);
+  if (bytes_sent < 0) {
     perror("Send segment failed");
     return -1;
   }
+
+  p7_log_segment(P7_SEND_DIRECTION, header, bytes_sent, session->addr);
 
   *seq_num += previous_bytes_read;
   header->seq_num = *seq_num;
@@ -124,7 +134,6 @@ static int p7_send_segment(p7_session_t *session, p7_header_t *header,
   if (cfg->hex == 1) {
     p7_print_hex_dump(previous, previous_bytes_read);
   }
-
   return 0;
 }
 
