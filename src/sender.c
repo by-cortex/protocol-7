@@ -21,7 +21,7 @@ static int send_with_retry(p7_session_t *session, p7_header_t *header,
                            uint8_t *recv_buffer, size_t recv_buffer_len);
 static int send_segment(p7_session_t *session, p7_header_t *header,
                         uint8_t *previous, size_t previous_bytes_read,
-                        uint32_t *seq_num, p7_config_t *cfg);
+                        p7_config_t *cfg);
 static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
                             size_t recv_buffer_len, p7_config_t *cfg);
 static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b);
@@ -97,9 +97,16 @@ static int send_with_retry(p7_session_t *session, p7_header_t *header,
                            uint8_t *recv_buffer, size_t recv_buffer_len) {
   int attempts = 0;
   while (attempts <= MAX_RETRIES) {
-    if (send_segment(session, header, previous, previous_bytes_read, seq_num,
-                     cfg) < 0) {
+    ssize_t bytes_sent =
+        send_segment(session, header, previous, previous_bytes_read, cfg);
+    if (bytes_sent < 0) {
       return -1;
+    }
+
+    if (attempts > 0) {
+      p7_log_segment(P7_RETRY_DIRECTION, header, bytes_sent, session->addr);
+    } else {
+      p7_log_segment(P7_SEND_DIRECTION, header, bytes_sent, session->addr);
     }
 
     struct timeval tv = {.tv_sec = TIMEOUT_SEC, .tv_usec = 0};
@@ -107,6 +114,8 @@ static int send_with_retry(p7_session_t *session, p7_header_t *header,
 
     ssize_t n = recv_ack_segment(session, recv_buffer, recv_buffer_len, cfg);
     if (n > 0) {
+      *seq_num += previous_bytes_read;
+      header->seq_num = *seq_num;
       return n;
     }
 
@@ -141,7 +150,7 @@ static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
 
 static int send_segment(p7_session_t *session, p7_header_t *header,
                         uint8_t *previous, size_t previous_bytes_read,
-                        uint32_t *seq_num, p7_config_t *cfg) {
+                        p7_config_t *cfg) {
   ssize_t bytes_sent = 0;
   p7_serialize_header(header, previous, P7_HEADER_SIZE + P7_MSS);
   bytes_sent =
@@ -152,15 +161,10 @@ static int send_segment(p7_session_t *session, p7_header_t *header,
     return -1;
   }
 
-  p7_log_segment(P7_SEND_DIRECTION, header, bytes_sent, session->addr);
-
-  *seq_num += previous_bytes_read;
-  header->seq_num = *seq_num;
-
   if (cfg->hex == 1) {
     p7_print_hex_dump(previous, previous_bytes_read);
   }
-  return 0;
+  return bytes_sent;
 }
 
 static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b) {

@@ -10,7 +10,7 @@
 
 static void format_timestamp(char *buffer, size_t buffer_size);
 static void format_segment_type(char *buffer, size_t buffer_size,
-                                const p7_header_t *header, size_t payload_len);
+                                const p7_header_t *header);
 static void format_bytes_num(char *buffer, size_t buffer_size,
                              const p7_header_t *header);
 static void format_flags(char buffer[6], const p7_header_t *header);
@@ -45,7 +45,7 @@ void p7_log_segment(P7_SEGMENT_DIRECTION direction, const p7_header_t *header,
 
   format_timestamp(time_str, sizeof(time_str));
   direction_str = format_direction(direction);
-  format_segment_type(segment_type, sizeof(segment_type), header, payload_len);
+  format_segment_type(segment_type, sizeof(segment_type), header);
   format_bytes_num(bytes_num, sizeof(bytes_num), header);
   format_flags(flags_str, header);
   arrow = format_arrow(direction);
@@ -66,8 +66,8 @@ static void format_timestamp(char *buffer, size_t buffer_size) {
 }
 
 static void format_segment_type(char *buffer, size_t buffer_size,
-                                const p7_header_t *header, size_t payload_len) {
-  if (header->flags == 0 && payload_len > 0) {
+                                const p7_header_t *header) {
+  if (header->flags == 0) {
     snprintf(buffer, buffer_size, "%s", "DATA");
   } else if (header->flags & P7_FIN_MASK) {
     snprintf(buffer, buffer_size, "%s", "FIN");
@@ -109,7 +109,7 @@ static void format_flags(char buffer[6], const p7_header_t *header) {
 }
 
 static const char *format_arrow(P7_SEGMENT_DIRECTION direction) {
-  if (direction == P7_SEND_DIRECTION)
+  if (direction == P7_SEND_DIRECTION || direction == P7_RETRY_DIRECTION)
     return "->";
   if (direction == P7_RECV_DIRECTION)
     return "<-";
@@ -121,5 +121,7 @@ static const char *format_direction(P7_SEGMENT_DIRECTION direction) {
     return "SEND";
   if (direction == P7_RECV_DIRECTION)
     return "RECV";
+  if (direction == P7_RETRY_DIRECTION)
+    return "RETR";
   return "-";
 }
