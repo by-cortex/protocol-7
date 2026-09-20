@@ -8,14 +8,22 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 
-static int p7_send_segment(p7_session_t *session, p7_header_t *header,
+#define MAX_RETRIES 5
+#define TIMEOUT_SEC 1
+
+static int send_with_retry(p7_session_t *session, p7_header_t *header,
                            uint8_t *previous, size_t previous_bytes_read,
-                           uint32_t *seq_num, p7_config_t *cfg);
-static int p7_recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
-                               size_t recv_buffer_len, p7_config_t *cfg);
+                           uint32_t *seq_num, p7_config_t *cfg,
+                           uint8_t *recv_buffer, size_t recv_buffer_len);
+static int send_segment(p7_session_t *session, p7_header_t *header,
+                        uint8_t *previous, size_t previous_bytes_read,
+                        uint32_t *seq_num, p7_config_t *cfg);
+static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
+                            size_t recv_buffer_len, p7_config_t *cfg);
 static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b);
 
 int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
@@ -50,30 +58,24 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
       continue;
     }
 
-    if (p7_send_segment(&session, &header, previous, previous_bytes_read,
-                        &seq_num, cfg) < 0) {
+    ssize_t bytes_sent =
+        send_with_retry(&session, &header, previous, previous_bytes_read,
+                        &seq_num, cfg, recv_buffer, sizeof(recv_buffer));
+    if (bytes_sent < 0) {
       fclose(fp);
       return -1;
     }
+
     swap_ptr(&current, &previous);
     previous_bytes_read = bytes_read;
-
-    if (p7_recv_ack_segment(&session, recv_buffer, sizeof(recv_buffer), cfg) <
-        0) {
-      fclose(fp);
-      return -1;
-    }
   }
 
   if (feof(fp)) {
     header.flags |= P7_FIN_MASK;
-    if (p7_send_segment(&session, &header, previous, previous_bytes_read,
-                        &seq_num, cfg) < 0) {
-      fclose(fp);
-      return -1;
-    }
-    if (p7_recv_ack_segment(&session, recv_buffer, sizeof(recv_buffer), cfg) <
-        0) {
+    ssize_t bytes_sent =
+        send_with_retry(&session, &header, previous, previous_bytes_read,
+                        &seq_num, cfg, recv_buffer, sizeof(recv_buffer));
+    if (bytes_sent < 0) {
       fclose(fp);
       return -1;
     }
@@ -89,8 +91,33 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
   return 0;
 }
 
-static int p7_recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
-                               size_t recv_buffer_len, p7_config_t *cfg) {
+static int send_with_retry(p7_session_t *session, p7_header_t *header,
+                           uint8_t *previous, size_t previous_bytes_read,
+                           uint32_t *seq_num, p7_config_t *cfg,
+                           uint8_t *recv_buffer, size_t recv_buffer_len) {
+  int attempts = 0;
+  while (attempts <= MAX_RETRIES) {
+    if (send_segment(session, header, previous, previous_bytes_read, seq_num,
+                     cfg) < 0) {
+      return -1;
+    }
+
+    struct timeval tv = {.tv_sec = TIMEOUT_SEC, .tv_usec = 0};
+    setsockopt(session->sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    ssize_t n = recv_ack_segment(session, recv_buffer, recv_buffer_len, cfg);
+    if (n > 0) {
+      return n;
+    }
+
+    attempts++;
+  }
+  fprintf(stderr, "[Sender] Receive ACK segment attempts limit\n");
+  return -1;
+}
+
+static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
+                            size_t recv_buffer_len, p7_config_t *cfg) {
   struct sockaddr_in ack_from_addr;
   socklen_t ack_from_addr_len = sizeof(ack_from_addr);
   p7_header_t header = {0};
@@ -99,7 +126,6 @@ static int p7_recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
       recvfrom(session->sock_fd, recv_buffer, recv_buffer_len, 0,
                (struct sockaddr *)&ack_from_addr, &ack_from_addr_len);
   if (bytes_received < 0) {
-    perror("Sender recv data failed");
     return -1;
   }
 
@@ -110,12 +136,12 @@ static int p7_recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
   if (cfg->hex == 1) {
     p7_print_hex_dump(recv_buffer, bytes_received);
   }
-  return 0;
+  return bytes_received;
 }
 
-static int p7_send_segment(p7_session_t *session, p7_header_t *header,
-                           uint8_t *previous, size_t previous_bytes_read,
-                           uint32_t *seq_num, p7_config_t *cfg) {
+static int send_segment(p7_session_t *session, p7_header_t *header,
+                        uint8_t *previous, size_t previous_bytes_read,
+                        uint32_t *seq_num, p7_config_t *cfg) {
   ssize_t bytes_sent = 0;
   p7_serialize_header(header, previous, P7_HEADER_SIZE + P7_MSS);
   bytes_sent =
