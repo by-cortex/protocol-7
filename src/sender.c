@@ -131,8 +131,9 @@ static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
   struct sockaddr_in ack_from_addr;
   socklen_t ack_from_addr_len = sizeof(ack_from_addr);
   p7_header_t header = {0};
+  ssize_t bytes_received = 0;
 
-  ssize_t bytes_received =
+  bytes_received =
       recvfrom(session->sock_fd, recv_buffer, recv_buffer_len, 0,
                (struct sockaddr *)&ack_from_addr, &ack_from_addr_len);
   if (bytes_received < 0) {
@@ -140,6 +141,12 @@ static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
   }
 
   p7_deserialize_header(&header, recv_buffer, recv_buffer_len);
+
+  uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
+  if (computed != 0) {
+    p7_log_segment(P7_DROP_DIRECTION, &header, bytes_received, &ack_from_addr);
+    return -1;
+  }
 
   p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &ack_from_addr);
 

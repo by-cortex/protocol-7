@@ -9,7 +9,8 @@
 typedef enum {
   P7_SEND_DIRECTION,
   P7_RECV_DIRECTION,
-  P7_RETRY_DIRECTION
+  P7_RETRY_DIRECTION,
+  P7_DROP_DIRECTION
 } P7_SEGMENT_DIRECTION;
 
 void p7_print_hex_dump(const uint8_t *buffer, ssize_t buffer_len);

@@ -111,7 +111,7 @@ static void format_flags(char buffer[6], const p7_header_t *header) {
 static const char *format_arrow(P7_SEGMENT_DIRECTION direction) {
   if (direction == P7_SEND_DIRECTION || direction == P7_RETRY_DIRECTION)
     return "->";
-  if (direction == P7_RECV_DIRECTION)
+  if (direction == P7_RECV_DIRECTION || direction == P7_DROP_DIRECTION)
     return "<-";
   return "-";
 }
@@ -123,5 +123,7 @@ static const char *format_direction(P7_SEGMENT_DIRECTION direction) {
     return "RECV";
   if (direction == P7_RETRY_DIRECTION)
     return "RETR";
+  if (direction == P7_DROP_DIRECTION)
+    return "DROP";
   return "-";
 }

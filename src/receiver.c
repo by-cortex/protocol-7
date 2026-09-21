@@ -54,8 +54,12 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
 
     p7_deserialize_header(&header, recv_buffer, bytes_received);
 
-    uint16_t checksum = p7_calculate_checksum(recv_buffer, bytes_received);
-    fprintf(stderr, "DEBUG CHECKSUM: %x\n", checksum);
+    uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
+    if (computed != 0) {
+      p7_log_segment(P7_DROP_DIRECTION, &header, bytes_received, &peer_addr);
+      memset(&header, 0, sizeof(header));
+      continue;
+    }
 
     p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &peer_addr);
 
@@ -92,6 +96,8 @@ static int send_ack(p7_session_t *session, uint32_t ack_num) {
   p7_header_t header = {0};
   header.flags |= P7_ACK_MASK;
   header.ack_num = ack_num;
+  p7_serialize_header(&header, send_buffer, sizeof(send_buffer));
+  header.checksum = p7_calculate_checksum(send_buffer, sizeof(send_buffer));
   p7_serialize_header(&header, send_buffer, sizeof(send_buffer));
 
   bytes_sent = sendto(session->sock_fd, send_buffer, sizeof(send_buffer), 0,
