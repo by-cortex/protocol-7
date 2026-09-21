@@ -1,5 +1,6 @@
 #include "sender.h"
 #include "args.h"
+#include "checksum.h"
 #include "debug.h"
 #include "header.h"
 #include "socket_utils.h"
@@ -152,7 +153,13 @@ static int send_segment(p7_session_t *session, p7_header_t *header,
                         uint8_t *previous, size_t previous_bytes_read,
                         p7_config_t *cfg) {
   ssize_t bytes_sent = 0;
+
+  header->checksum = 0;
   p7_serialize_header(header, previous, P7_HEADER_SIZE + P7_MSS);
+  header->checksum =
+      p7_calculate_checksum(previous, P7_HEADER_SIZE + previous_bytes_read);
+  p7_serialize_header(header, previous, P7_HEADER_SIZE + P7_MSS);
+
   bytes_sent =
       sendto(session->sock_fd, previous, P7_HEADER_SIZE + previous_bytes_read,
              0, (struct sockaddr *)session->addr, session->addr_len);

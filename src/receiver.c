@@ -1,5 +1,6 @@
 #include "receiver.h"
 #include "args.h"
+#include "checksum.h"
 #include "debug.h"
 #include "header.h"
 #include "socket_utils.h"
@@ -52,6 +53,9 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
     session.addr_len = peer_addr_len;
 
     p7_deserialize_header(&header, recv_buffer, bytes_received);
+
+    uint16_t checksum = p7_calculate_checksum(recv_buffer, bytes_received);
+    fprintf(stderr, "DEBUG CHECKSUM: %x\n", checksum);
 
     p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &peer_addr);
 
