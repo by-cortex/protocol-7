@@ -20,13 +20,13 @@ int p7_serialize_header(const p7_header_t *header, uint8_t *buffer,
   memcpy(buffer + offset, &ack_num_n, sizeof(ack_num_n));
   offset += sizeof(ack_num_n);
 
-  uint8_t flags_n = header->flags;
-  buffer[offset] = flags_n;
-  offset += 1;
-
   uint16_t checksum_n = htons(header->checksum);
   memcpy(buffer + offset, &checksum_n, sizeof(checksum_n));
   offset += sizeof(checksum_n);
+
+  uint8_t flags_n = header->flags;
+  buffer[offset] = flags_n;
+  offset += 1;
 
   buffer[offset] = 0;
   offset += 1;
@@ -52,13 +52,13 @@ int p7_deserialize_header(p7_header_t *header, const uint8_t *buffer,
   header->ack_num = ntohl(ack_num_n);
   offset += sizeof(ack_num_n);
 
-  header->flags = buffer[offset];
-  offset += 1;
-
   uint16_t checksum_n;
   memcpy(&checksum_n, buffer + offset, sizeof(checksum_n));
   header->checksum = ntohs(checksum_n);
   offset += sizeof(checksum_n);
+
+  header->flags = buffer[offset];
+  offset += 1;
 
   offset += 1;
   return offset;

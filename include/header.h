@@ -20,8 +20,8 @@
 typedef struct {
   uint32_t seq_num;
   uint32_t ack_num;
-  uint8_t flags;
   uint16_t checksum;
+  uint8_t flags;
 } p7_header_t;
 
 int p7_serialize_header(const p7_header_t *header, uint8_t *buffer,
