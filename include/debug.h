@@ -6,6 +6,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#define P7_COLOR_RED "\033[0;31m"
+#define P7_COLOR_YELLOW "\033[0;33m"
+#define P7_COLOR_RESET "\033[0m"
+
 typedef enum {
   P7_SEND_DIRECTION,
   P7_RECV_DIRECTION,

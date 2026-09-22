@@ -16,6 +16,7 @@ static void format_bytes_num(char *buffer, size_t buffer_size,
 static void format_flags(char buffer[6], const p7_header_t *header);
 static const char *format_arrow(P7_SEGMENT_DIRECTION direction);
 static const char *format_direction(P7_SEGMENT_DIRECTION direction);
+static const char *color_for_direction(P7_SEGMENT_DIRECTION direction);
 
 void p7_print_hex_dump(const uint8_t *buffer, ssize_t buffer_len) {
   fprintf(stderr, "--- HEADER ---\n");
@@ -41,18 +42,20 @@ void p7_log_segment(P7_SEGMENT_DIRECTION direction, const p7_header_t *header,
   char segment_type[16];
   char bytes_num[24];
   char flags_str[6] = "----";
-  const char *arrow;
+  const char *arrow = format_arrow(direction);
+  const char *color = color_for_direction(direction);
+  const char *reset = (color[0] != '\0') ? P7_COLOR_RESET : "";
 
   format_timestamp(time_str, sizeof(time_str));
   direction_str = format_direction(direction);
   format_segment_type(segment_type, sizeof(segment_type), header);
   format_bytes_num(bytes_num, sizeof(bytes_num), header);
   format_flags(flags_str, header);
-  arrow = format_arrow(direction);
 
-  fprintf(stderr, "[%s] %-5s %-8s %-12s size=%-5zu flags=%s  %s %s:%d\n",
-          time_str, direction_str, segment_type, bytes_num, payload_len,
-          flags_str, arrow, inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
+  fprintf(stderr, "[%s] %s%-5s%s %-8s %-12s size=%-5zu flags=%s  %s %s:%d\n",
+          time_str, color, direction_str, reset, segment_type, bytes_num,
+          payload_len, flags_str, arrow, inet_ntoa(addr->sin_addr),
+          ntohs(addr->sin_port));
 }
 
 static void format_timestamp(char *buffer, size_t buffer_size) {
@@ -126,4 +129,12 @@ static const char *format_direction(P7_SEGMENT_DIRECTION direction) {
   if (direction == P7_DROP_DIRECTION)
     return "DROP";
   return "-";
+}
+
+static const char *color_for_direction(P7_SEGMENT_DIRECTION direction) {
+  if (direction == P7_DROP_DIRECTION)
+    return P7_COLOR_RED;
+  if (direction == P7_RETRY_DIRECTION)
+    return P7_COLOR_YELLOW;
+  return "";
 }
