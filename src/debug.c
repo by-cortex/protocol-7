@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 static void format_timestamp(char *buffer, size_t buffer_size);
 static void format_segment_type(char *buffer, size_t buffer_size,
@@ -132,6 +133,8 @@ static const char *format_direction(P7_SEGMENT_DIRECTION direction) {
 }
 
 static const char *color_for_direction(P7_SEGMENT_DIRECTION direction) {
+  if (!isatty(fileno(stderr)))
+    return "";
   if (direction == P7_DROP_DIRECTION)
     return P7_COLOR_RED;
   if (direction == P7_RETRY_DIRECTION)
