@@ -24,7 +24,8 @@ static int send_segment(p7_session_t *session, p7_header_t *header,
                         uint8_t *previous, size_t previous_bytes_read,
                         p7_config_t *cfg);
 static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
-                            size_t recv_buffer_len, p7_config_t *cfg);
+                            size_t recv_buffer_len, uint32_t seq_num,
+                            p7_config_t *cfg);
 static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b);
 
 int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
@@ -113,7 +114,8 @@ static int send_with_retry(p7_session_t *session, p7_header_t *header,
     struct timeval tv = {.tv_sec = TIMEOUT_SEC, .tv_usec = 0};
     setsockopt(session->sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    ssize_t n = recv_ack_segment(session, recv_buffer, recv_buffer_len, cfg);
+    ssize_t n = recv_ack_segment(session, recv_buffer, recv_buffer_len,
+                                 *seq_num + previous_bytes_read, cfg);
     if (n > 0) {
       *seq_num += previous_bytes_read;
       header->seq_num = *seq_num;
@@ -127,33 +129,41 @@ static int send_with_retry(p7_session_t *session, p7_header_t *header,
 }
 
 static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
-                            size_t recv_buffer_len, p7_config_t *cfg) {
+                            size_t recv_buffer_len, uint32_t seq_num,
+                            p7_config_t *cfg) {
   struct sockaddr_in ack_from_addr;
   socklen_t ack_from_addr_len = sizeof(ack_from_addr);
   p7_header_t header = {0};
   ssize_t bytes_received = 0;
 
-  bytes_received =
-      recvfrom(session->sock_fd, recv_buffer, recv_buffer_len, 0,
-               (struct sockaddr *)&ack_from_addr, &ack_from_addr_len);
-  if (bytes_received < 0) {
-    return -1;
+  while (1) {
+    bytes_received =
+        recvfrom(session->sock_fd, recv_buffer, recv_buffer_len, 0,
+                 (struct sockaddr *)&ack_from_addr, &ack_from_addr_len);
+    if (bytes_received < 0) {
+      return -1;
+    }
+
+    p7_deserialize_header(&header, recv_buffer, recv_buffer_len);
+
+    uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
+    if (computed != 0) {
+      p7_log_segment(P7_DROP_DIRECTION, &header, bytes_received,
+                     &ack_from_addr);
+      return -1;
+    }
+
+    p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &ack_from_addr);
+
+    if (header.ack_num < seq_num) {
+      continue;
+    }
+
+    if (cfg->hex == 1) {
+      p7_print_hex_dump(recv_buffer, bytes_received);
+    }
+    return bytes_received;
   }
-
-  p7_deserialize_header(&header, recv_buffer, recv_buffer_len);
-
-  uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
-  if (computed != 0) {
-    p7_log_segment(P7_DROP_DIRECTION, &header, bytes_received, &ack_from_addr);
-    return -1;
-  }
-
-  p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &ack_from_addr);
-
-  if (cfg->hex == 1) {
-    p7_print_hex_dump(recv_buffer, bytes_received);
-  }
-  return bytes_received;
 }
 
 static int send_segment(p7_session_t *session, p7_header_t *header,

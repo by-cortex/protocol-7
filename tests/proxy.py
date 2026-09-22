@@ -1,5 +1,6 @@
 import argparse
 import socket
+import time
 from random import randint, random
 
 DROP_PACKETS_PERCENT = 30
@@ -48,12 +49,14 @@ def run_mock_proxy_server(proxy_port: int, dest_port: int, mode: str) -> None:
                     if addr[1] != dest_port:
                         src_port = addr[1]
                         sock.sendto(data, ("127.0.0.1", dest_port))
+                        time.sleep(0.5)
                         sock.sendto(data, ("127.0.0.1", dest_port))
                         print(
                             f"[DOUBLE] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{dest_port}"
                         )
                     else:
                         sock.sendto(data, ("127.0.0.1", src_port))
+                        time.sleep(0.5)
                         sock.sendto(data, ("127.0.0.1", src_port))
                         print(
                             f"[DOUBLE] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{src_port}"
