@@ -4,6 +4,7 @@ from random import randint, random
 
 DROP_PACKETS_PERCENT = 30
 CORRUPT_PACKETS_PERCENT = 30
+DOUBLE_PACKETS_PERCENT = 30
 
 
 def run_mock_proxy_server(proxy_port: int, dest_port: int, mode: str) -> None:
@@ -41,8 +42,22 @@ def run_mock_proxy_server(proxy_port: int, dest_port: int, mode: str) -> None:
                         print(
                             f"[CORRUPT] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{src_port}"
                         )
-
                     continue
+            case "double":
+                if random() < CORRUPT_PACKETS_PERCENT / 100:
+                    if addr[1] != dest_port:
+                        src_port = addr[1]
+                        sock.sendto(data, ("127.0.0.1", dest_port))
+                        sock.sendto(data, ("127.0.0.1", dest_port))
+                        print(
+                            f"[DOUBLE] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{dest_port}"
+                        )
+                    else:
+                        sock.sendto(data, ("127.0.0.1", src_port))
+                        sock.sendto(data, ("127.0.0.1", src_port))
+                        print(
+                            f"[DOUBLE] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{src_port}"
+                        )
 
         if addr[1] != dest_port:
             src_port = addr[1]
@@ -77,7 +92,10 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--aport", type=int, default=5656)
     parser.add_argument("-d", "--bport", type=int, default=6767)
     parser.add_argument(
-        "-m", "--mode", choices=["normal", "drop", "corrupt"], default="normal"
+        "-m",
+        "--mode",
+        choices=["normal", "drop", "corrupt", "double"],
+        default="normal",
     )
     args = parser.parse_args()
     run_mock_proxy_server(args.aport, args.bport, args.mode)
