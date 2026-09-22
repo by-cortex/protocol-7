@@ -37,5 +37,6 @@ static const p7_option_t p7_otions[] = {
 
 void p7_build_getopt_tables(char optstring[], struct option long_opts[]);
 void p7_print_help(const char *prog);
+int p7_set_cfg(p7_config_t *cfg, int opt, char *argv[]);
 
 #endif // ARGS_H

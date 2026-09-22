@@ -1,6 +1,7 @@
 #include "args.h"
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 void p7_build_getopt_tables(char optstring[], struct option long_opts[]) {
   size_t oi = 0;
@@ -27,4 +28,34 @@ void p7_print_help(const char *prog) {
     fprintf(stderr, "  -%c, --%-10s %s\n", p7_otions[i].short_name,
             p7_otions[i].long_name, p7_otions[i].help);
   }
+}
+
+int p7_set_cfg(p7_config_t *cfg, int opt, char *argv[]) {
+  switch (opt) {
+  case 's':
+    cfg->mode = P7_MODE_SEND;
+    break;
+  case 'r':
+    cfg->mode = P7_MODE_RECV;
+    break;
+  case 'H':
+    cfg->host = optarg;
+    break;
+  case 'p':
+    cfg->port = atoi(optarg);
+    break;
+  case 'x':
+    cfg->hex = 1;
+    break;
+  case 'f':
+    cfg->file = optarg;
+    break;
+  case 'h':
+    p7_print_help(argv[0]);
+    return 1;
+  default:
+    p7_print_help(argv[0]);
+    return 1;
+  }
+  return 0;
 }

@@ -5,7 +5,6 @@
 #include <bits/getopt_core.h>
 #include <getopt.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -24,32 +23,8 @@ int main(int argc, char *argv[]) {
 
   int opt;
   while ((opt = getopt_long(argc, argv, optstring, long_opts, NULL)) != -1) {
-    switch (opt) {
-    case 's':
-      cfg.mode = P7_MODE_SEND;
-      break;
-    case 'r':
-      cfg.mode = P7_MODE_RECV;
-      break;
-    case 'H':
-      cfg.host = optarg;
-      break;
-    case 'p':
-      cfg.port = atoi(optarg);
-      break;
-    case 'x':
-      cfg.hex = 1;
-      break;
-    case 'f':
-      cfg.file = optarg;
-      break;
-    case 'h':
-      p7_print_help(argv[0]);
+    if (p7_set_cfg(&cfg, opt, argv) > 0)
       return 0;
-    default:
-      p7_print_help(argv[0]);
-      return 1;
-    }
   }
 
   if (cfg.mode == P7_MODE_NONE) {
