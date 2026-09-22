@@ -48,10 +48,10 @@ send: $(TARGET)
 	./$(TARGET) -s -f ./test.txt
 
 valgrind-recv: $(TARGET)
-	valgrind --leak-check=full --track-origins=yes ./$(TARGET) -r
+	valgrind --leak-check=full --track-origins=yes ./$(TARGET) -r -f ./out.txt -p 6767
 
 valgrind-send: $(TARGET)
-	valgrind --leak-check=full --track-origins=yes ./$(TARGET) -s -f ./test.txt
+	valgrind --leak-check=full --track-origins=yes ./$(TARGET) -s -f ./test.txt -p 5656
 
 compiledb: clean
 	bear -- make all
