@@ -6,7 +6,7 @@
 void p7_build_getopt_tables(char optstring[], struct option long_opts[]) {
   size_t oi = 0;
   for (size_t i = 0; i < P7_NUM_OPTIONS; i++) {
-    const p7_option_t *o = &p7_otions[i];
+    const p7_option_t *o = &p7_options[i];
 
     optstring[oi++] = o->short_name;
     if (o->has_arg == required_argument) {
@@ -25,8 +25,8 @@ void p7_build_getopt_tables(char optstring[], struct option long_opts[]) {
 void p7_print_help(const char *prog) {
   fprintf(stderr, "Usage: %s [options]\n\nOptions:\n", prog);
   for (size_t i = 0; i < P7_NUM_OPTIONS; i++) {
-    fprintf(stderr, "  -%c, --%-10s %s\n", p7_otions[i].short_name,
-            p7_otions[i].long_name, p7_otions[i].help);
+    fprintf(stderr, "  -%c, --%-10s %s\n", p7_options[i].short_name,
+            p7_options[i].long_name, p7_options[i].help);
   }
 }
 

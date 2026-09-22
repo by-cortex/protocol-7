@@ -6,7 +6,7 @@
 #define P7_DEFAULT_HOST "127.0.0.1"
 #define P7_DEFAULT_PORT 6767
 
-#define P7_NUM_OPTIONS ((sizeof(p7_otions)) / (sizeof(p7_otions[0])))
+#define P7_NUM_OPTIONS ((sizeof(p7_options)) / (sizeof(p7_options[0])))
 
 typedef struct {
   const char *long_name;
@@ -25,7 +25,7 @@ typedef struct {
   const char *file;
 } p7_config_t;
 
-static const p7_option_t p7_otions[] = {
+static const p7_option_t p7_options[] = {
     {"send", 's', no_argument, "run as sender"},
     {"recv", 'r', no_argument, "run as receiver"},
     {"host", 'H', required_argument, "destination host (default 127.0.0.1)"},
