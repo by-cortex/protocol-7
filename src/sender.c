@@ -155,7 +155,7 @@ static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
 
     p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &ack_from_addr);
 
-    if (header.ack_num < seq_num) {
+    if (header.ack_num != seq_num) {
       continue;
     }
 
