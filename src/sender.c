@@ -150,7 +150,7 @@ static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
     if (computed != 0) {
       p7_log_segment(P7_DROP_DIRECTION, &header, bytes_received,
                      &ack_from_addr);
-      return -1;
+      continue;
     }
 
     p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &ack_from_addr);

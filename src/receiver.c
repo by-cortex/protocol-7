@@ -106,6 +106,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
 static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
                            size_t recv_buffer_len, uint32_t ack_num,
                            p7_header_t *header) {
+  uint16_t computed = 0;
   struct timeval tv = {.tv_sec = TIMEOUT_SEC, .tv_usec = 0};
   setsockopt(session->sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
@@ -115,9 +116,12 @@ static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
                  (struct sockaddr *)session->addr, &session->addr_len);
 
     if (bytes_received > 0) {
-      p7_deserialize_header(header, recv_buffer, bytes_received);
+      if (p7_deserialize_header(header, recv_buffer, bytes_received) < 0 ||
+          (size_t)bytes_received < P7_HEADER_SIZE) {
+        continue;
+      }
 
-      uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
+      computed = p7_calculate_checksum(recv_buffer, bytes_received);
       if (computed != 0) {
         p7_log_segment(P7_DROP_DIRECTION, header, bytes_received,
                        session->addr);
@@ -127,7 +131,7 @@ static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
       }
     }
 
-    if (bytes_received > 0) {
+    if (bytes_received > 0 && computed == 0) {
       if ((send_ack(session, ack_num)) < 0) {
         return -1;
       }
