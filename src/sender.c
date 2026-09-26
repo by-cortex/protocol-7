@@ -144,7 +144,7 @@ static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
       return -1;
     }
 
-    p7_deserialize_header(&header, recv_buffer, recv_buffer_len);
+    p7_deserialize_header(&header, recv_buffer, bytes_received);
 
     uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
     if (computed != 0) {
