@@ -58,7 +58,10 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
     session.addr = &peer_addr;
     session.addr_len = peer_addr_len;
 
-    p7_deserialize_header(&header, recv_buffer, bytes_received);
+    if (p7_deserialize_header(&header, recv_buffer, bytes_received) < 0 ||
+        (size_t)bytes_received < P7_HEADER_SIZE) {
+      continue;
+    }
 
     uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
     if (computed != 0) {
