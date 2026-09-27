@@ -114,24 +114,21 @@ static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
     ssize_t bytes_received =
         recvfrom(session->sock_fd, recv_buffer, recv_buffer_len, 0,
                  (struct sockaddr *)session->addr, &session->addr_len);
-
-    if (bytes_received > 0) {
-      if (p7_deserialize_header(header, recv_buffer, bytes_received) < 0 ||
-          (size_t)bytes_received < P7_HEADER_SIZE) {
-        continue;
-      }
-
-      computed = p7_calculate_checksum(recv_buffer, bytes_received);
-      if (computed != 0) {
-        p7_log_segment(P7_DROP_DIRECTION, header, bytes_received,
-                       session->addr);
-      } else {
-        p7_log_segment(P7_RECV_DIRECTION, header, bytes_received,
-                       session->addr);
-      }
+    if (bytes_received < 0) {
+      return 0;
     }
 
-    if (bytes_received > 0 && computed == 0) {
+    if (p7_deserialize_header(header, recv_buffer, bytes_received) < 0 ||
+        (size_t)bytes_received < P7_HEADER_SIZE) {
+      continue;
+    }
+
+    computed = p7_calculate_checksum(recv_buffer, bytes_received);
+    if (computed != 0) {
+      p7_log_segment(P7_DROP_DIRECTION, header, bytes_received, session->addr);
+    } else {
+      p7_log_segment(P7_RECV_DIRECTION, header, bytes_received, session->addr);
+
       if ((send_ack(session, ack_num)) < 0) {
         return -1;
       }
