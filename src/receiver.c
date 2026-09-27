@@ -125,9 +125,9 @@ static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
     computed = p7_calculate_checksum(recv_buffer, bytes_received);
     if (computed != 0) {
       p7_log_segment(P7_DROP_DIRECTION, header, bytes_received, session->addr);
+      continue;
     } else {
       p7_log_segment(P7_RECV_DIRECTION, header, bytes_received, session->addr);
-
       if ((send_ack(session, ack_num)) < 0) {
         return -1;
       }
