@@ -42,6 +42,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
 
   if (bind(sock_fd, (struct sockaddr *)bind_addr, bind_addr_len) < 0) {
     perror("Binding receiver socket failed");
+    fclose(fp);
     return -1;
   }
 
@@ -52,6 +53,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
 
     if (bytes_received < 0) {
       perror("Received data failed");
+      fclose(fp);
       return -1;
     }
 
@@ -85,12 +87,11 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
     }
 
     if ((send_ack(&session, ack_num)) < 0) {
+      fclose(fp);
       return -1;
     }
   }
-  if (cfg->file != NULL) {
-    fclose(fp);
-  }
+  fclose(fp);
 
   if ((wait_double_fin(&session, recv_buffer, sizeof(recv_buffer), ack_num,
                        &header)) < 0) {
