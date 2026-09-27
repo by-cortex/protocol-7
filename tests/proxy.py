@@ -45,7 +45,7 @@ def run_mock_proxy_server(proxy_port: int, dest_port: int, mode: str) -> None:
                         )
                     continue
             case "double":
-                if random() < CORRUPT_PACKETS_PERCENT / 100:
+                if random() < DOUBLE_PACKETS_PERCENT / 100:
                     if addr[1] != dest_port:
                         src_port = addr[1]
                         sock.sendto(data, ("127.0.0.1", dest_port))
