@@ -4,47 +4,28 @@
 #include "debug.h"
 #include "header.h"
 #include "socket_utils.h"
+#include <bits/time.h>
+#include <bits/types/struct_timeval.h>
 #include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 
-#define MAX_RETRIES 5
-#define TIMEOUT_SEC 1
-
-static int send_with_retry(p7_session_t *session, p7_header_t *header,
-                           uint8_t *previous, size_t previous_bytes_read,
-                           uint32_t *seq_num, p7_config_t *cfg,
-                           uint8_t *recv_buffer, size_t recv_buffer_len);
-static int send_segment(p7_session_t *session, p7_header_t *header,
-                        uint8_t *previous, size_t previous_bytes_read,
-                        p7_config_t *cfg);
-static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
-                            size_t recv_buffer_len, uint32_t seq_num,
-                            p7_config_t *cfg);
-static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b);
+static uint64_t get_time_ms(void);
 
 int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
                   p7_config_t *cfg) {
-  uint8_t buffer_a[P7_HEADER_SIZE + P7_MSS] = {0};
-  uint8_t buffer_b[P7_HEADER_SIZE + P7_MSS] = {0};
-  uint8_t *current = buffer_a;
-  uint8_t *previous = buffer_b;
-  size_t bytes_read = 0;
-  size_t previous_bytes_read = 0;
-  int is_previous = 0;
-  p7_header_t header = {0};
-  p7_session_t session = {0};
-  uint32_t seq_num = 0;
-  uint8_t recv_buffer[P7_HEADER_SIZE + P7_MSS] = {0};
 
-  session.sock_fd = sock_fd;
-  session.addr = dest_addr;
-  session.addr_len = sizeof(*dest_addr);
+  p7_session_t session = {
+      .sock_fd = sock_fd,
+      .addr = dest_addr,
+      .addr_len = sizeof(*dest_addr),
+  };
 
   FILE *fp = fopen(cfg->file, "rb");
   if (fp == NULL) {
@@ -52,147 +33,140 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
     return -1;
   }
 
-  while ((bytes_read = fread(current + P7_HEADER_SIZE, 1, P7_MSS, fp)) > 0) {
-    if (is_previous == 0) {
-      swap_ptr(&current, &previous);
-      previous_bytes_read = bytes_read;
-      is_previous = 1;
-      continue;
-    }
-
-    ssize_t bytes_sent =
-        send_with_retry(&session, &header, previous, previous_bytes_read,
-                        &seq_num, cfg, recv_buffer, sizeof(recv_buffer));
-    if (bytes_sent < 0) {
-      fclose(fp);
-      return -1;
-    }
-
-    swap_ptr(&current, &previous);
-    previous_bytes_read = bytes_read;
-  }
-
-  if (feof(fp)) {
-    header.flags |= P7_FIN_MASK;
-    ssize_t bytes_sent =
-        send_with_retry(&session, &header, previous, previous_bytes_read,
-                        &seq_num, cfg, recv_buffer, sizeof(recv_buffer));
-    if (bytes_sent < 0) {
-      fclose(fp);
-      return -1;
-    }
-
-    fclose(fp);
-    printf("[Sender] Success file transfer!\n");
-    return 0;
-  } else if (ferror(fp)) {
-    perror("fread");
+  p7_sender_window_t *window = calloc(1, sizeof(p7_sender_window_t));
+  if (!window) {
     fclose(fp);
     return -1;
   }
+
+  struct timeval tv = {.tv_sec = 0, .tv_usec = 20000};
+  setsockopt(session.sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+  int is_eof = 0;
+
+  while (1) {
+    if (is_eof && window->base == window->new_seq) {
+      printf("[Sender] Transfer complete successfully!\n");
+      break;
+    }
+
+    uint64_t now_ms = get_time_ms();
+
+    // -------------------------------
+    // Window filling
+    // -------------------------------
+
+    while (!is_eof) {
+      uint32_t in_flight_bytes = window->new_seq - window->base;
+      uint32_t max_window_bytes = P7_WINDOW_SIZE * P7_MSS;
+
+      if (in_flight_bytes >= max_window_bytes) {
+        break;
+      }
+
+      uint32_t segment_idx = window->new_seq / P7_MSS;
+      uint32_t slot_idx = segment_idx % P7_WINDOW_SIZE;
+
+      p7_sender_slot_t *slot = &window->slots[slot_idx];
+
+      size_t bytes_read = fread(slot->data + P7_HEADER_SIZE, 1, P7_MSS, fp);
+      if (bytes_read == 0) {
+        if (feof(fp)) {
+          is_eof = 1;
+        }
+        break;
+      }
+
+      slot->seq_num = window->new_seq;
+      slot->data_len = bytes_read;
+      slot->is_acked = 0;
+      slot->send_time_ms = now_ms;
+
+      p7_header_t header = {0};
+      header.seq_num = slot->seq_num;
+      if (is_eof && feof(fp)) {
+        header.flags |= P7_FIN_MASK;
+      }
+
+      p7_serialize_header(&header, slot->data, P7_HEADER_SIZE);
+      header.checksum = p7_calculate_checksum(slot->data, slot->data_len);
+      p7_serialize_header(&header, slot->data, P7_HEADER_SIZE);
+
+      ssize_t bytes_send =
+          sendto(session.sock_fd, slot->data, slot->data_len, 0,
+                 (struct sockaddr *)session.addr, session.addr_len);
+      if (bytes_send < 0) {
+        perror("Failed send segment");
+      }
+      p7_log_segment(P7_SEND_DIRECTION, &header, slot->data_len, session.addr);
+      window->new_seq += bytes_read;
+    }
+
+    // -------------------------------
+    // Recv ACK/SACK
+    // -------------------------------
+
+    uint8_t ack_buffer[P7_HEADER_SIZE + P7_MSS] = {0};
+    struct sockaddr_in ack_addr = {0};
+    socklen_t ack_addr_len = sizeof(ack_addr);
+
+    ssize_t bytes_recv =
+        recvfrom(session.sock_fd, ack_buffer, sizeof(ack_buffer), 0,
+                 (struct sockaddr *)&ack_addr, &ack_addr_len);
+    if (bytes_recv > 0 && p7_calculate_checksum(ack_buffer, bytes_recv) == 0) {
+      p7_header_t ack_header = {0};
+      p7_deserialize_header(&ack_header, ack_buffer, sizeof(ack_buffer));
+
+      p7_log_segment(P7_RECV_DIRECTION, &ack_header, bytes_recv, &ack_addr);
+
+      if (ack_header.ack_num > window->base) {
+        window->base = ack_header.ack_num;
+      }
+
+      // TODO: SACK
+
+      while (window->base < window->new_seq) {
+        uint32_t base_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
+        if (window->slots[base_idx].is_acked) {
+          window->base += (window->slots[base_idx].data_len - P7_HEADER_SIZE);
+        } else {
+          break;
+        }
+      }
+    }
+
+    // -------------------------------
+    // Selective Repeat
+    // -------------------------------
+
+    now_ms = get_time_ms();
+    uint32_t start_seg_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
+    uint32_t end_seg_idx = (window->new_seq / P7_MSS) % P7_WINDOW_SIZE;
+
+    for (uint32_t i = start_seg_idx; i < end_seg_idx; i++) {
+      p7_sender_slot_t *slot = &window->slots[i];
+
+      if (!slot->is_acked && (now_ms - slot->send_time_ms > P7_TIMEOUT_MS)) {
+        sendto(session.sock_fd, slot->data, slot->data_len, 0,
+               (struct sockaddr *)dest_addr, sizeof(*dest_addr));
+
+        p7_header_t header = {0};
+        p7_deserialize_header(&header, slot->data, slot->data_len);
+        p7_log_segment(P7_SEND_DIRECTION, &header, slot->data_len,
+                       session.addr);
+
+        slot->send_time_ms = now_ms;
+      }
+    }
+  }
+
+  free(window);
+  fclose(fp);
   return 0;
 }
 
-static int send_with_retry(p7_session_t *session, p7_header_t *header,
-                           uint8_t *previous, size_t previous_bytes_read,
-                           uint32_t *seq_num, p7_config_t *cfg,
-                           uint8_t *recv_buffer, size_t recv_buffer_len) {
-  int attempts = 0;
-  while (attempts <= MAX_RETRIES) {
-    ssize_t bytes_sent =
-        send_segment(session, header, previous, previous_bytes_read, cfg);
-    if (bytes_sent < 0) {
-      return -1;
-    }
-
-    if (attempts > 0) {
-      p7_log_segment(P7_RETRY_DIRECTION, header, bytes_sent, session->addr);
-    } else {
-      p7_log_segment(P7_SEND_DIRECTION, header, bytes_sent, session->addr);
-    }
-
-    struct timeval tv = {.tv_sec = TIMEOUT_SEC, .tv_usec = 0};
-    setsockopt(session->sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    ssize_t n = recv_ack_segment(session, recv_buffer, recv_buffer_len,
-                                 *seq_num + previous_bytes_read, cfg);
-    if (n > 0) {
-      *seq_num += previous_bytes_read;
-      header->seq_num = *seq_num;
-      return n;
-    }
-
-    attempts++;
-  }
-  fprintf(stderr, "[Sender] Receive ACK segment attempts limit\n");
-  return -1;
-}
-
-static int recv_ack_segment(p7_session_t *session, uint8_t *recv_buffer,
-                            size_t recv_buffer_len, uint32_t seq_num,
-                            p7_config_t *cfg) {
-  struct sockaddr_in ack_from_addr;
-  socklen_t ack_from_addr_len = sizeof(ack_from_addr);
-  p7_header_t header = {0};
-  ssize_t bytes_received = 0;
-
-  while (1) {
-    bytes_received =
-        recvfrom(session->sock_fd, recv_buffer, recv_buffer_len, 0,
-                 (struct sockaddr *)&ack_from_addr, &ack_from_addr_len);
-    if (bytes_received < 0) {
-      return -1;
-    }
-
-    p7_deserialize_header(&header, recv_buffer, bytes_received);
-
-    uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
-    if (computed != 0) {
-      p7_log_segment(P7_DROP_DIRECTION, &header, bytes_received,
-                     &ack_from_addr);
-      continue;
-    }
-
-    p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &ack_from_addr);
-
-    if (header.ack_num != seq_num) {
-      continue;
-    }
-
-    if (cfg->hex == 1) {
-      p7_print_hex_dump(recv_buffer, bytes_received);
-    }
-    return bytes_received;
-  }
-}
-
-static int send_segment(p7_session_t *session, p7_header_t *header,
-                        uint8_t *previous, size_t previous_bytes_read,
-                        p7_config_t *cfg) {
-  ssize_t bytes_sent = 0;
-
-  header->checksum = 0;
-  p7_serialize_header(header, previous, P7_HEADER_SIZE + P7_MSS);
-  header->checksum =
-      p7_calculate_checksum(previous, P7_HEADER_SIZE + previous_bytes_read);
-  p7_serialize_header(header, previous, P7_HEADER_SIZE + P7_MSS);
-
-  bytes_sent =
-      sendto(session->sock_fd, previous, P7_HEADER_SIZE + previous_bytes_read,
-             0, (struct sockaddr *)session->addr, session->addr_len);
-  if (bytes_sent < 0) {
-    perror("Send segment failed");
-    return -1;
-  }
-
-  if (cfg->hex == 1) {
-    p7_print_hex_dump(previous, previous_bytes_read);
-  }
-  return bytes_sent;
-}
-
-static void swap_ptr(uint8_t **buff_a, uint8_t **buff_b) {
-  uint8_t *tmp = *buff_a;
-  *buff_a = *buff_b;
-  *buff_b = tmp;
+static uint64_t get_time_ms(void) {
+  struct timespec ts = {0};
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
