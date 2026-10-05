@@ -78,7 +78,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
       }
 
       slot->seq_num = window->new_seq;
-      slot->data_len = bytes_read;
+      slot->data_len = P7_HEADER_SIZE + bytes_read;
       slot->is_acked = 0;
       slot->send_time_ms = now_ms;
 
