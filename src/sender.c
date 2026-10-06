@@ -84,7 +84,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
 
       p7_header_t header = {0};
       header.seq_num = slot->seq_num;
-      if (is_eof && feof(fp)) {
+      if (feof(fp)) {
         header.flags |= P7_FIN_MASK;
       }
 
