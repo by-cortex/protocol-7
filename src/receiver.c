@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -21,17 +22,7 @@ static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
 
 int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
                     p7_config_t *cfg) {
-  uint8_t recv_buffer[P7_HEADER_SIZE + P7_MSS] = {0};
-  struct sockaddr_in peer_addr = {0};
-  socklen_t peer_addr_len = sizeof(peer_addr);
-  socklen_t bind_addr_len = sizeof(*bind_addr);
-  p7_header_t header = {0};
-  p7_session_t session = {0};
   FILE *fp = stdout;
-  uint32_t ack_num = 0;
-
-  session.sock_fd = sock_fd;
-
   if (cfg->file != NULL) {
     fp = fopen(cfg->file, "wb");
     if (fp == NULL) {
@@ -40,65 +31,128 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
     }
   }
 
-  if (bind(sock_fd, (struct sockaddr *)bind_addr, bind_addr_len) < 0) {
+  if (bind(sock_fd, (struct sockaddr *)bind_addr, sizeof(*bind_addr)) < 0) {
     perror("Binding receiver socket failed");
     fclose(fp);
     return -1;
   }
 
-  while (!(header.flags & P7_FIN_MASK)) {
-    ssize_t bytes_received =
-        recvfrom(sock_fd, recv_buffer, sizeof(recv_buffer), 0,
-                 (struct sockaddr *)&peer_addr, &peer_addr_len);
+  p7_recv_window_t *window = calloc(1, sizeof(p7_recv_window_t));
+  if (!window) {
+    fclose(fp);
+    return -1;
+  }
 
-    if (bytes_received < 0) {
+  while (1) {
+    uint8_t recv_buffer[P7_HEADER_SIZE + P7_MSS] = {0};
+
+    struct sockaddr_in peer_addr = {0};
+    socklen_t peer_addr_len = sizeof(peer_addr);
+    p7_session_t peer_session = {
+        .sock_fd = sock_fd,
+        .addr = &peer_addr,
+        .addr_len = peer_addr_len,
+    };
+
+    ssize_t bytes_recv =
+        recvfrom(peer_session.sock_fd, &recv_buffer, sizeof(recv_buffer), 0,
+                 (struct sockaddr *)peer_session.addr, &peer_session.addr_len);
+    if (bytes_recv < 0) {
       perror("Received data failed");
       fclose(fp);
       return -1;
     }
 
-    session.addr = &peer_addr;
-    session.addr_len = peer_addr_len;
-
-    if (p7_deserialize_header(&header, recv_buffer, bytes_received) < 0 ||
-        (size_t)bytes_received < P7_HEADER_SIZE) {
+    p7_header_t header = {0};
+    if (p7_deserialize_header(&header, recv_buffer, sizeof(recv_buffer)) < 0) {
       continue;
     }
 
-    uint16_t computed = p7_calculate_checksum(recv_buffer, bytes_received);
+    uint16_t computed = p7_calculate_checksum(recv_buffer, sizeof(recv_buffer));
     if (computed != 0) {
-      p7_log_segment(P7_DROP_DIRECTION, &header, bytes_received, &peer_addr);
+      p7_log_segment(P7_DROP_DIRECTION, &header, bytes_recv, peer_session.addr);
       memset(&header, 0, sizeof(header));
       continue;
     }
+    p7_log_segment(P7_RECV_DIRECTION, &header, bytes_recv, peer_session.addr);
 
-    p7_log_segment(P7_RECV_DIRECTION, &header, bytes_received, &peer_addr);
+    // -------------------------------
+    // Segment in window
+    // -------------------------------
 
-    if (cfg->hex == 1) {
-      p7_print_hex_dump(recv_buffer, bytes_received);
+    if (window->expected_seq <= header.seq_num &&
+        header.seq_num < (window->expected_seq + P7_MAX_WINDOW_BYTES)) {
+      int slot_idx = (header.seq_num / P7_MSS) % P7_WINDOW_SIZE;
+      if (!window->slots[slot_idx].is_received) {
+        p7_recv_slot_t *slot = &window->slots[slot_idx];
+        memcpy(&slot->data, recv_buffer + P7_HEADER_SIZE,
+               bytes_recv - P7_HEADER_SIZE);
+        slot->data_len = bytes_recv - P7_HEADER_SIZE;
+        slot->is_received = 1;
+        slot->is_fin = (header.flags & P7_FIN_MASK);
+      }
     }
 
-    if (header.seq_num == ack_num) {
-      ack_num += bytes_received - P7_HEADER_SIZE;
+    // -------------------------------
+    // Old segment
+    // -------------------------------
 
-      fwrite(recv_buffer + P7_HEADER_SIZE, 1, bytes_received - P7_HEADER_SIZE,
-             fp);
+    else if (header.seq_num < window->expected_seq) {
+      if ((send_ack(&peer_session, window->expected_seq)) < 0) {
+        fclose(fp);
+        return -1;
+      }
+      continue;
+    }
+
+    // -------------------------------
+    // Slide window and write to file
+    // -------------------------------
+
+    int is_fin = 0;
+    while (1) {
+      int slot_idx = (window->expected_seq / P7_MSS) % P7_WINDOW_SIZE;
+      p7_recv_slot_t *slot = &window->slots[slot_idx];
+
+      if (!slot->is_received) {
+        break;
+      }
+
+      fwrite(&slot->data, 1, slot->data_len, fp);
       memset(recv_buffer, 0, sizeof(recv_buffer));
+
+      slot->is_received = 0;
+      window->expected_seq += slot->data_len;
+
+      if (slot->is_fin) {
+        if ((send_ack(&peer_session, window->expected_seq)) < 0) {
+          fclose(fp);
+          return -1;
+        }
+        if ((wait_double_fin(&peer_session, recv_buffer, sizeof(recv_buffer),
+                             window->expected_seq, &header)) < 0) {
+          fclose(fp);
+          return -1;
+        }
+        is_fin = 1;
+        break;
+      }
     }
 
-    if ((send_ack(&session, ack_num)) < 0) {
+    if (is_fin) {
+      break;
+    }
+
+    if ((send_ack(&peer_session, window->expected_seq)) < 0) {
       fclose(fp);
       return -1;
     }
   }
-  fclose(fp);
-
-  if ((wait_double_fin(&session, recv_buffer, sizeof(recv_buffer), ack_num,
-                       &header)) < 0) {
-    return -1;
-  }
 
   printf("[Receiver] Success file transfer!\n");
+
+  free(window);
+  fclose(fp);
   return 0;
 }
 
