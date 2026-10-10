@@ -167,11 +167,13 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
 
     if (activity == 0) {
       now_ms = get_time_ms();
-      uint32_t start_seg_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
-      uint32_t end_seg_idx = (window->new_seq / P7_MSS) % P7_WINDOW_SIZE;
 
-      for (uint32_t i = start_seg_idx; i <= end_seg_idx; i++) {
-        p7_sender_slot_t *slot = &window->slots[i];
+      uint32_t start_seg = window->base / P7_MSS;
+      uint32_t end_seg = window->new_seq / P7_MSS;
+
+      for (uint32_t i = start_seg; i <= end_seg; i++) {
+        uint32_t slot_idx = i % P7_WINDOW_SIZE;
+        p7_sender_slot_t *slot = &window->slots[slot_idx];
 
         if (!slot->is_acked && (now_ms - slot->send_time_ms > P7_TIMEOUT_MS)) {
           sendto(session.sock_fd, slot->data, slot->data_len, 0,
