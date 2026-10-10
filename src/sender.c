@@ -20,6 +20,8 @@
 #include <sys/types.h>
 #include <time.h>
 
+#define P7_MAX_DUP_COUNT 3
+
 static uint64_t get_time_ms(void);
 
 int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
@@ -51,6 +53,9 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
       .revents = 0,
   };
   int timeout_ms = 50;
+
+  int dup_ack_count = 0;
+  uint32_t last_seq_num = 0;
 
   while (1) {
     if (is_eof && window->base == window->new_seq) {
@@ -148,6 +153,27 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
 
           // TODO: SACK
 
+          if (last_seq_num == ack_header.ack_num) {
+            dup_ack_count++;
+          } else {
+            dup_ack_count = 0;
+          }
+          last_seq_num = ack_header.ack_num;
+
+          if (dup_ack_count >= P7_MAX_DUP_COUNT) {
+            uint32_t slot_idx = (ack_header.ack_num / P7_MSS) % P7_WINDOW_SIZE;
+            sendto(session.sock_fd, window->slots[slot_idx].data,
+                   window->slots[slot_idx].data_len, 0,
+                   (struct sockaddr *)dest_addr, sizeof(*dest_addr));
+            p7_header_t header = {0};
+            p7_deserialize_header(&header, window->slots[slot_idx].data,
+                                  window->slots[slot_idx].data_len);
+            p7_log_segment(P7_RETRY_DIRECTION, &header,
+                           window->slots[slot_idx].data_len, session.addr);
+
+            dup_ack_count = 0;
+          }
+
           while (window->base < window->new_seq) {
             uint32_t base_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
             if (window->slots[base_idx].is_acked) {
@@ -181,7 +207,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
 
           p7_header_t header = {0};
           p7_deserialize_header(&header, slot->data, slot->data_len);
-          p7_log_segment(P7_SEND_DIRECTION, &header, slot->data_len,
+          p7_log_segment(P7_RETRY_DIRECTION, &header, slot->data_len,
                          session.addr);
 
           slot->send_time_ms = now_ms;
