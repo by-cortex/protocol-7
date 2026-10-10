@@ -1,81 +1,11 @@
 import argparse
 import socket
-import time
 from random import randint, random
-
-DROP_PACKETS_PERCENT = 30
-CORRUPT_PACKETS_PERCENT = 30
-DOUBLE_PACKETS_PERCENT = 30
-
-
-def run_mock_proxy_server(proxy_port: int, dest_port: int, mode: str) -> None:
-    src_port = 0
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("127.0.0.1", proxy_port))
-    print(
-        f"[PROXY] Server running: 127.0.0.1:{proxy_port} - 127.0.0.1:{dest_port} with {mode} mode..."
-    )
-
-    request_count = 0
-
-    while True:
-        data, addr = sock.recvfrom(2048)
-        request_count += 1
-
-        match mode:
-            case "normal":
-                pass
-            case "drop":
-                if random() < DROP_PACKETS_PERCENT / 100:
-                    print(f"[DROP] {get_log_info(request_count, data, addr)} -> X")
-                    continue
-            case "corrupt":
-                if random() < CORRUPT_PACKETS_PERCENT / 100:
-                    data = corrupt_data(data)
-                    if addr[1] != dest_port:
-                        src_port = addr[1]
-                        sock.sendto(data, ("127.0.0.1", dest_port))
-                        print(
-                            f"[CORRUPT] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{dest_port}"
-                        )
-                    else:
-                        sock.sendto(data, ("127.0.0.1", src_port))
-                        print(
-                            f"[CORRUPT] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{src_port}"
-                        )
-                    continue
-            case "double":
-                if random() < DOUBLE_PACKETS_PERCENT / 100:
-                    if addr[1] != dest_port:
-                        src_port = addr[1]
-                        sock.sendto(data, ("127.0.0.1", dest_port))
-                        time.sleep(0.5)
-                        sock.sendto(data, ("127.0.0.1", dest_port))
-                        print(
-                            f"[DOUBLE] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{dest_port}"
-                        )
-                    else:
-                        sock.sendto(data, ("127.0.0.1", src_port))
-                        time.sleep(0.5)
-                        sock.sendto(data, ("127.0.0.1", src_port))
-                        print(
-                            f"[DOUBLE] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{src_port}"
-                        )
-
-        if addr[1] != dest_port:
-            src_port = addr[1]
-            sock.sendto(data, ("127.0.0.1", dest_port))
-            print(
-                f"[PROXY] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{dest_port}"
-            )
-        else:
-            sock.sendto(data, ("127.0.0.1", src_port))
-            print(
-                f"[PROXY] {get_log_info(request_count, data, addr)} -> 127.0.0.1:{src_port}"
-            )
 
 
 def corrupt_data(data: bytes) -> bytes:
+    if not data:
+        return data
     mutable_data = bytearray(data)
     idx = randint(0, len(data) - 1)
     original = data[idx]
@@ -86,19 +16,122 @@ def corrupt_data(data: bytes) -> bytes:
     return bytes(mutable_data)
 
 
-def get_log_info(request_count: int, data: bytes, addr: tuple) -> str:
-    return f"#{request_count} ({len(data)} bytes) {addr[0]}:{addr[1]}"
+def run_mock_proxy_server(
+    proxy_port: int,
+    dest_port: int,
+    mode: str,
+    drop_pct: int,
+    corrupt_pct: int,
+    double_pct: int,
+) -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", proxy_port))
+
+    print(
+        f"[PROXY] Running on 127.0.0.1:{proxy_port} -> forwarding to 127.0.0.1:{dest_port}"
+    )
+    print(
+        f"[PROXY] Mode: {mode.upper()} | Drop: {drop_pct}% | Corrupt: {corrupt_pct}% | Double: {double_pct}%"
+    )
+    print("-" * 70)
+
+    client_addr = None
+    request_count = 0
+
+    while True:
+        try:
+            data, addr = sock.recvfrom(65535)
+        except Exception as e:
+            print(f"[PROXY ERROR] recvfrom failed: {e}")
+            break
+
+        request_count += 1
+
+        is_from_client = addr[1] != dest_port
+
+        if is_from_client:
+            client_addr = addr
+            target_addr = ("127.0.0.1", dest_port)
+            direction_str = "CLIENT -> SERVER"
+        else:
+            if client_addr is None:
+                continue
+            target_addr = client_addr
+            direction_str = "SERVER -> CLIENT"
+
+        packets_to_send = [data]
+
+        match mode:
+            case "normal":
+                pass
+
+            case "drop":
+                if random() < (drop_pct / 100.0):
+                    print(
+                        f"[DROP] #{request_count} ({len(data)} bytes) [{direction_str}] X-> Dropped"
+                    )
+                    continue
+
+            case "corrupt":
+                if random() < (corrupt_pct / 100.0):
+                    packets_to_send = [corrupt_data(data)]
+                    print(
+                        f"[CORRUPT] #{request_count} ({len(data)} bytes) [{direction_str}] -> Byte flipped!"
+                    )
+
+            case "double":
+                if random() < (double_pct / 100.0):
+                    packets_to_send = [data, data]
+                    print(
+                        f"[DOUBLE] #{request_count} ({len(data)} bytes) [{direction_str}] -> Duplicated!"
+                    )
+
+        for pkt in packets_to_send:
+            try:
+                sock.sendto(pkt, target_addr)
+            except Exception as e:
+                print(f"[PROXY ERROR] sendto failed: {e}")
+
+        print(
+            f"[FWD]   #{request_count} ({len(data)} bytes) [{direction_str}] -> 127.0.0.1:{target_addr[1]}"
+        )
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-p", "--aport", type=int, default=5656)
-    parser.add_argument("-d", "--bport", type=int, default=6767)
+    parser = argparse.ArgumentParser(description="P7 Protocol Network Impairment Proxy")
+    parser.add_argument(
+        "-p", "--aport", type=int, default=5656, help="Proxy listen port"
+    )
+    parser.add_argument(
+        "-d", "--bport", type=int, default=6767, help="Destination server port"
+    )
     parser.add_argument(
         "-m",
         "--mode",
         choices=["normal", "drop", "corrupt", "double"],
         default="normal",
+        help="Network impairment mode",
     )
+    parser.add_argument(
+        "--drop-rate", type=int, default=30, help="Drop probability percentage"
+    )
+    parser.add_argument(
+        "--corrupt-rate", type=int, default=30, help="Corruption probability percentage"
+    )
+    parser.add_argument(
+        "--double-rate", type=int, default=30, help="Duplication probability percentage"
+    )
+
     args = parser.parse_args()
-    run_mock_proxy_server(args.aport, args.bport, args.mode)
+
+    try:
+        run_mock_proxy_server(
+            proxy_port=args.aport,
+            dest_port=args.bport,
+            mode=args.mode,
+            drop_pct=args.drop_rate,
+            corrupt_pct=args.corrupt_rate,
+            double_pct=args.double_rate,
+        )
+    except KeyboardInterrupt:
+        print("\n[PROXY] Stopped by user.")
