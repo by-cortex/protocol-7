@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define P7_WINDOW_SIZE 8
+#define P7_WINDOW_SIZE 32
 #define P7_TIMEOUT_MS 1000
 
 typedef struct {

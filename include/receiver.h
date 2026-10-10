@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define P7_WINDOW_SIZE 8
+#define P7_WINDOW_SIZE 32
 #define P7_MAX_WINDOW_BYTES (P7_WINDOW_SIZE * P7_MSS)
 
 typedef struct {
