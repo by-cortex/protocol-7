@@ -4,13 +4,17 @@
 #include "debug.h"
 #include "header.h"
 #include "socket_utils.h"
+#include <asm-generic/errno-base.h>
 #include <bits/time.h>
 #include <bits/types/struct_timeval.h>
+#include <errno.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -39,15 +43,14 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
     return -1;
   }
 
-  struct timeval tv = {.tv_sec = 0, .tv_usec = 20000};
-  if (setsockopt(session.sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) <
-      0) {
-    perror("Setsockopt SO_RCVTIMEO failed");
-    fclose(fp);
-    return -1;
-  }
-
   int is_eof = 0;
+
+  struct pollfd pfd = {
+      .fd = session.sock_fd,
+      .events = POLLIN,
+      .revents = 0,
+  };
+  int timeout_ms = 50;
 
   while (1) {
     if (is_eof && window->base == window->new_seq) {
@@ -108,34 +111,52 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
     }
 
     // -------------------------------
+
+    int activity = poll(&pfd, 1, timeout_ms);
+
+    if (activity < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      perror("Poll error");
+      break;
+    }
+
+    // -------------------------------
     // Recv ACK/SACK
     // -------------------------------
 
-    uint8_t ack_buffer[P7_HEADER_SIZE + P7_MSS] = {0};
-    struct sockaddr_in ack_addr = {0};
-    socklen_t ack_addr_len = sizeof(ack_addr);
+    if (activity > 0) {
+      if (pfd.revents & POLLIN) {
+        uint8_t ack_buffer[P7_HEADER_SIZE + P7_MSS] = {0};
+        struct sockaddr_in ack_addr = {0};
+        socklen_t ack_addr_len = sizeof(ack_addr);
 
-    ssize_t bytes_recv =
-        recvfrom(session.sock_fd, ack_buffer, sizeof(ack_buffer), 0,
-                 (struct sockaddr *)&ack_addr, &ack_addr_len);
-    if (bytes_recv > 0 && p7_calculate_checksum(ack_buffer, bytes_recv) == 0) {
-      p7_header_t ack_header = {0};
-      p7_deserialize_header(&ack_header, ack_buffer, sizeof(ack_buffer));
+        ssize_t bytes_recv =
+            recvfrom(session.sock_fd, ack_buffer, sizeof(ack_buffer), 0,
+                     (struct sockaddr *)&ack_addr, &ack_addr_len);
+        if (bytes_recv > 0 &&
+            p7_calculate_checksum(ack_buffer, bytes_recv) == 0) {
+          p7_header_t ack_header = {0};
+          p7_deserialize_header(&ack_header, ack_buffer, sizeof(ack_buffer));
 
-      p7_log_segment(P7_RECV_DIRECTION, &ack_header, bytes_recv, &ack_addr);
+          p7_log_segment(P7_RECV_DIRECTION, &ack_header, bytes_recv, &ack_addr);
 
-      if (ack_header.ack_num > window->base) {
-        window->base = ack_header.ack_num;
-      }
+          if (ack_header.ack_num > window->base) {
+            window->base = ack_header.ack_num;
+          }
 
-      // TODO: SACK
+          // TODO: SACK
 
-      while (window->base < window->new_seq) {
-        uint32_t base_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
-        if (window->slots[base_idx].is_acked) {
-          window->base += (window->slots[base_idx].data_len - P7_HEADER_SIZE);
-        } else {
-          break;
+          while (window->base < window->new_seq) {
+            uint32_t base_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
+            if (window->slots[base_idx].is_acked) {
+              window->base +=
+                  (window->slots[base_idx].data_len - P7_HEADER_SIZE);
+            } else {
+              break;
+            }
+          }
         }
       }
     }
@@ -144,23 +165,25 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
     // Selective Repeat
     // -------------------------------
 
-    now_ms = get_time_ms();
-    uint32_t start_seg_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
-    uint32_t end_seg_idx = (window->new_seq / P7_MSS) % P7_WINDOW_SIZE;
+    if (activity == 0) {
+      now_ms = get_time_ms();
+      uint32_t start_seg_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
+      uint32_t end_seg_idx = (window->new_seq / P7_MSS) % P7_WINDOW_SIZE;
 
-    for (uint32_t i = start_seg_idx; i <= end_seg_idx; i++) {
-      p7_sender_slot_t *slot = &window->slots[i];
+      for (uint32_t i = start_seg_idx; i <= end_seg_idx; i++) {
+        p7_sender_slot_t *slot = &window->slots[i];
 
-      if (!slot->is_acked && (now_ms - slot->send_time_ms > P7_TIMEOUT_MS)) {
-        sendto(session.sock_fd, slot->data, slot->data_len, 0,
-               (struct sockaddr *)dest_addr, sizeof(*dest_addr));
+        if (!slot->is_acked && (now_ms - slot->send_time_ms > P7_TIMEOUT_MS)) {
+          sendto(session.sock_fd, slot->data, slot->data_len, 0,
+                 (struct sockaddr *)dest_addr, sizeof(*dest_addr));
 
-        p7_header_t header = {0};
-        p7_deserialize_header(&header, slot->data, slot->data_len);
-        p7_log_segment(P7_SEND_DIRECTION, &header, slot->data_len,
-                       session.addr);
+          p7_header_t header = {0};
+          p7_deserialize_header(&header, slot->data, slot->data_len);
+          p7_log_segment(P7_SEND_DIRECTION, &header, slot->data_len,
+                         session.addr);
 
-        slot->send_time_ms = now_ms;
+          slot->send_time_ms = now_ms;
+        }
       }
     }
   }
