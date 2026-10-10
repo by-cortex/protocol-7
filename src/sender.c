@@ -40,7 +40,12 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
   }
 
   struct timeval tv = {.tv_sec = 0, .tv_usec = 20000};
-  setsockopt(session.sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  if (setsockopt(session.sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) <
+      0) {
+    perror("Setsockopt SO_RCVTIMEO failed");
+    fclose(fp);
+    return -1;
+  }
 
   int is_eof = 0;
 
@@ -143,7 +148,7 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
     uint32_t start_seg_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
     uint32_t end_seg_idx = (window->new_seq / P7_MSS) % P7_WINDOW_SIZE;
 
-    for (uint32_t i = start_seg_idx; i < end_seg_idx; i++) {
+    for (uint32_t i = start_seg_idx; i <= end_seg_idx; i++) {
       p7_sender_slot_t *slot = &window->slots[i];
 
       if (!slot->is_acked && (now_ms - slot->send_time_ms > P7_TIMEOUT_MS)) {
