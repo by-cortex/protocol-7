@@ -112,6 +112,9 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
         perror("Failed send segment");
       }
       p7_log_segment(P7_SEND_DIRECTION, &header, slot->data_len, session.addr);
+      if (cfg->hex) {
+        p7_print_hex_dump(slot->data, slot->data_len);
+      }
       window->new_seq += bytes_read;
     }
 
@@ -146,6 +149,9 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
           p7_deserialize_header(&ack_header, ack_buffer, sizeof(ack_buffer));
 
           p7_log_segment(P7_RECV_DIRECTION, &ack_header, bytes_recv, &ack_addr);
+          if (cfg->hex) {
+            p7_print_hex_dump(ack_buffer, bytes_recv);
+          }
 
           if (ack_header.ack_num > window->base) {
             window->base = ack_header.ack_num;
@@ -170,6 +176,10 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
                                   window->slots[slot_idx].data_len);
             p7_log_segment(P7_RETRY_DIRECTION, &header,
                            window->slots[slot_idx].data_len, session.addr);
+            if (cfg->hex) {
+              p7_print_hex_dump(window->slots[slot_idx].data,
+                                window->slots[slot_idx].data_len);
+            }
 
             dup_ack_count = 0;
           }
@@ -209,6 +219,9 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
           p7_deserialize_header(&header, slot->data, slot->data_len);
           p7_log_segment(P7_RETRY_DIRECTION, &header, slot->data_len,
                          session.addr);
+          if (cfg->hex) {
+            p7_print_hex_dump(slot->data, slot->data_len);
+          }
 
           slot->send_time_ms = now_ms;
         }
