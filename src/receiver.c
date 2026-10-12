@@ -15,10 +15,11 @@
 
 #define TIMEOUT_SEC 4
 
-static int send_ack(p7_session_t *session, uint32_t ack_num);
+static int send_ack(p7_session_t *session, uint32_t ack_num,
+                    const p7_recv_window_t *window);
 static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
                            size_t recv_buffer_len, uint32_t ack_num,
-                           p7_header_t *header);
+                           p7_header_t *header, const p7_recv_window_t *window);
 
 int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
                     p7_config_t *cfg) {
@@ -98,7 +99,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
     // -------------------------------
 
     else if (header.seq_num < window->expected_seq) {
-      if ((send_ack(&peer_session, window->expected_seq)) < 0) {
+      if ((send_ack(&peer_session, window->expected_seq, window)) < 0) {
         fclose(fp);
         return -1;
       }
@@ -125,12 +126,12 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
       window->expected_seq += slot->data_len;
 
       if (slot->is_fin) {
-        if ((send_ack(&peer_session, window->expected_seq)) < 0) {
+        if ((send_ack(&peer_session, window->expected_seq, window)) < 0) {
           fclose(fp);
           return -1;
         }
         if ((wait_double_fin(&peer_session, recv_buffer, sizeof(recv_buffer),
-                             window->expected_seq, &header)) < 0) {
+                             window->expected_seq, &header, window)) < 0) {
           fclose(fp);
           return -1;
         }
@@ -143,7 +144,7 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
       break;
     }
 
-    if ((send_ack(&peer_session, window->expected_seq)) < 0) {
+    if ((send_ack(&peer_session, window->expected_seq, window)) < 0) {
       fclose(fp);
       return -1;
     }
@@ -158,7 +159,8 @@ int p7_run_receiver(int sock_fd, struct sockaddr_in *bind_addr,
 
 static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
                            size_t recv_buffer_len, uint32_t ack_num,
-                           p7_header_t *header) {
+                           p7_header_t *header,
+                           const p7_recv_window_t *window) {
   uint16_t computed = 0;
   struct timeval tv = {.tv_sec = TIMEOUT_SEC, .tv_usec = 0};
   setsockopt(session->sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -182,7 +184,7 @@ static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
       continue;
     } else {
       p7_log_segment(P7_RECV_DIRECTION, header, bytes_received, session->addr);
-      if ((send_ack(session, ack_num)) < 0) {
+      if ((send_ack(session, ack_num, window)) < 0) {
         return -1;
       }
       continue;
@@ -192,13 +194,24 @@ static int wait_double_fin(p7_session_t *session, uint8_t *recv_buffer,
   }
 }
 
-static int send_ack(p7_session_t *session, uint32_t ack_num) {
+static int send_ack(p7_session_t *session, uint32_t ack_num,
+                    const p7_recv_window_t *window) {
   uint8_t send_buffer[P7_HEADER_SIZE] = {0};
   ssize_t bytes_sent = 0;
 
   p7_header_t header = {0};
   header.flags |= P7_ACK_MASK;
   header.ack_num = ack_num;
+
+  uint32_t segment_idx = ack_num / P7_MSS;
+  uint32_t slot_idx = segment_idx % P7_WINDOW_SIZE;
+  for (int i = 1; i < P7_WINDOW_SIZE; i++) {
+    uint32_t current_slot = (slot_idx + i) % P7_WINDOW_SIZE;
+    if (window->slots[current_slot].is_received) {
+      header.ack_mask |= (1U << (i - 1));
+    }
+  }
+
   p7_serialize_header(&header, send_buffer, sizeof(send_buffer));
   header.checksum = p7_calculate_checksum(send_buffer, sizeof(send_buffer));
   p7_serialize_header(&header, send_buffer, sizeof(send_buffer));
