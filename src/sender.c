@@ -157,7 +157,13 @@ int p7_run_sender(int sock_fd, struct sockaddr_in *dest_addr,
             window->base = ack_header.ack_num;
           }
 
-          // TODO: SACK
+          uint32_t base_idx = (window->base / P7_MSS) % P7_WINDOW_SIZE;
+          for (int i = 0; i < P7_WINDOW_SIZE - 1; i++) {
+            if (ack_header.ack_mask & (1U << i)) {
+              uint32_t acked_idx = (base_idx + i + 1) % P7_WINDOW_SIZE;
+              window->slots[acked_idx].is_acked = 1;
+            }
+          }
 
           if (last_seq_num == ack_header.ack_num) {
             dup_ack_count++;
