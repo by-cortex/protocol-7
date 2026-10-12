@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define P7_HEADER_SIZE 12
+#define P7_HEADER_SIZE 16
 
 #define P7_MTU 1500
 #define P7_UDP_HEADER_SIZE 8
@@ -20,6 +20,7 @@
 typedef struct {
   uint32_t seq_num;
   uint32_t ack_num;
+  uint32_t ack_mask;
   uint16_t checksum;
   uint8_t flags;
 } p7_header_t;
