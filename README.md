@@ -1,73 +1,64 @@
-```text
-██████╗ ██████╗  ██████╗ ████████╗ ██████╗  ██████╗ ██████╗ ██╗   ███████╗
-██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██║   ╚════██║
-██████╔╝██████╔╝██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║█████╗ ██╔╝
-██╔═══╝ ██╔══██╗██║   ██║   ██║   ██║   ██║██║     ██║   ██║██║╚════╝██╔╝ 
-██║     ██║  ██║╚██████╔╝   ██║   ╚██████╔╝╚██████╗╚██████╔╝███████╗ ██║  
-╚═╝     ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝ ╚═╝                                                                            
-```
-
-*A reliable, byte-stream transport protocol built from scratch on top of UDP — in plain C11, no dependencies beyond POSIX sockets.*
+*A reliable, pipelined byte-stream transport protocol built from scratch on top of UDP — in plain C11, featuring a sliding window, bitmask-based SACK, and fast retransmission.*
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Language](https://img.shields.io/badge/language-C11-00599C.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
 
-Protocol-7 (P7) is a hand-rolled transport protocol: a custom binary wire format, checksummed segments, ARQ-based reliability, and connection teardown semantics, all implemented directly over `SOCK_DGRAM` sockets. There is no TCP stack involved beyond UDP itself — sequencing, acknowledgment, retransmission, deduplication, and closing a connection cleanly are all reimplemented here.
+Protocol-7 (P7) is a hand-rolled transport protocol implemented directly over POSIX `SOCK_DGRAM` sockets. It recreates core TCP reliability mechanics from the ground up: byte-offset stream tracking, a 16-bit word-aligned checksum, pipelined sliding window transmission, selective acknowledgments (SACK), fast retransmission, and graceful connection teardown.
 
-This is a working prototype, not a production transport. It's built to make the reliability guarantees TCP gives you for free — and the edge cases that make them hard — visible and testable. A longer write-up covering the design decisions and what broke along the way is in progress.
+---
 
 ## Table of Contents
 
-- [Status](#status)
+- [Features](#features)
 - [Wire Format](#wire-format)
 - [How It Works](#how-it-works)
 - [Getting Started](#getting-started)
 - [CLI Reference](#cli-reference)
-- [Chaos Testing](#chaos-testing)
+- [Chaos Testing & Benchmarks](#chaos-testing--benchmarks)
 - [Verification](#verification)
 - [Project Layout](#project-layout)
 - [Roadmap](#roadmap)
 - [Known Limitations](#known-limitations)
 - [License](#license)
 
-## Status
+---
 
-### Protocol / wire format
+## Features
 
-- [x] Custom binary wire format over UDP — 12-byte header: `seq_num`, `ack_num`, `checksum`, `flags`
-- [x] **Byte-offset** sequencing (not packet-based) — sequence numbers track stream position, so retransmission and re-fragmentation don't desynchronize the stream
-- [x] Own checksum, computed with the one's-complement algorithm used by IP/UDP/TCP — doesn't rely on the (optional, often disabled) UDP checksum
-- [x] Reliable delivery via stop-and-wait ARQ: timeout + retransmission (`SO_RCVTIMEO`, bounded retry count)
-- [x] Strict `ack_num` verification — an ACK is only accepted if it matches the exact expected byte offset, not "any ACK counts"
-- [x] Receiver-side deduplication by `seq_num`
-- [x] FIN piggybacked on the final data segment (no separate empty close packet) — implemented via a two-buffer lookahead so the sender knows a chunk is last *before* it sends it
-- [x] TIME_WAIT-style teardown (`wait_double_fin`) — after sending the final ACK, the receiver keeps answering retransmitted FINs instead of exiting immediately, in case that final ACK was lost
+### Protocol & Reliability
 
-### Infrastructure / testing
+- **Sliding Window Pipelining:** Fixed-size 32-slot ring buffer allowing multiple unacknowledged segments in flight.
+- **I/O Multiplexing via `poll()`:** Non-blocking event loop handling segment bursts, incoming ACKs, and timeout scanning concurrently.
+- **Byte-Offset Sequencing:** Continuous byte-stream positioning (like TCP), independent of segment chunk sizes.
+- **Selective ACK (SACK):** Custom 32-bit ACK mask header field allowing the receiver to report out-of-order buffered blocks.
+- **Fast Retransmit (RFC 5681):** Triggers immediate retransmission upon receiving 3 duplicate ACKs without waiting for coarse RTO timers.
+- **Selective Repeat:** Retransmits only unacknowledged (`!is_acked`) expired slots rather than resetting the entire window (Go-Back-N).
+- **16-bit Word-Aligned Checksum:** One's-complement arithmetic with end-around carry, correctly positioned at even byte boundaries to guarantee `0x0000` self-cancellation.
+- **Piggybacked FIN:** Look-ahead double buffering allows setting the `FIN` flag on the final payload chunk, saving a round-trip.
+- **TIME_WAIT State:** Receiver maintains an active wait period after final ACK to catch and resolve lost FIN retransmissions.
 
-- [x] Python chaos-testing proxy (`tests/proxy.py`): `normal` / `drop` / `corrupt` / `double` relay modes, bidirectional (relays data one way and ACKs the other)
-- [x] Structured, colorized segment logging — ms-precision timestamps, segment type, direction, flags, drop reason
-- [x] Two build targets via Makefile: plain build and an ASan+UBSan build
-- [x] Clean under `valgrind --leak-check=full --track-origins=yes`: 0 leaks, 0 errors, on both sender and receiver
-- [x] CLI with `getopt_long` option tables generated from a single source-of-truth array (`p7_options[]`) — no duplicated flag definitions between parsing and `--help`
+### Tooling & Verification
 
-### Verified behavior
+- **Chaos Proxy:** Python UDP relay simulating packet loss, byte corruption, and duplicate delivery.
+- **Automated Benchmarks:** Test suite measuring transfer throughput, integrity, and loss recovery across modes.
+- **Zero Memory Leaks:** Clean runs under `valgrind --leak-check=full` and AddressSanitizer (`-fsanitize=address,undefined`).
 
-- [x] End-to-end transfer of text and binary payloads (tested with `.jpg` files), confirmed byte-for-byte with `diff` / `sha256sum`
-- [x] Correct recovery under up to 30% packet loss, duplicated segments, and corrupted payloads (caught by checksum) injected via the proxy
+---
 
 ## Wire Format
 
-Every segment starts with a fixed 12-byte header, sent in network byte order, immediately followed by up to `P7_MSS` bytes of payload:
+Every segment starts with a fixed **16-byte header** sent in network byte order (Big-Endian), followed by up to `P7_MSS` bytes of payload:
 
-```
+```text
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                       Sequence Number (32)                    |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                    Acknowledgment Number (32)                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Selective ACK Mask (32)                  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |          Checksum (16)        |    Flags (8)  | Reserved (8)  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -77,163 +68,165 @@ Every segment starts with a fixed 12-byte header, sent in network byte order, im
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-| Field                     | Size    | Notes                                                                 |
-|---------------------------|---------|------------------------------------------------------------------------|
-| Sequence Number           | 32 bits | Byte offset of this segment's first payload byte in the stream        |
-| Acknowledgment Number     | 32 bits | Next byte offset the sender/receiver expects                          |
-| Checksum                  | 16 bits | One's-complement checksum over header + payload, zeroed before compute |
-| Flags                     | 8 bits  | `SYN` (0x01) · `ACK` (0x02) · `FIN` (0x04) · `RST` (0x08) — top 4 bits reserved |
-| Reserved                  | 8 bits  | Zeroed, reserved for future use                                       |
+| Field                  | Size    | Description                                                            |
+|------------------------|---------|------------------------------------------------------------------------|
+| **Sequence Number**    | 32 bits | Byte offset of the segment's first payload byte in the stream.         |
+| **Acknowledgment Number** | 32 bits | Cumulative ACK: the next contiguous byte offset the receiver expects. |
+| **Selective ACK Mask** | 32 bits | Bitmask tracking out-of-order received slots relative to `ack_num`.     |
+| **Checksum**           | 16 bits | One's-complement sum over header + payload (aligned to byte 8).        |
+| **Flags**              | 8 bits  | Control bits: `SYN` (0x01), `ACK` (0x02), `FIN` (0x04), `RST` (0x08).    |
+| **Reserved**           | 8 bits  | Zeroed padding for memory structure alignment.                         |
 
-`SYN` and `RST` are already defined in the flags mask and understood by the logger, but there's no handshake or reset path wired up yet — see [Roadmap](#roadmap).
+The **Maximum Segment Size (MSS)** is derived from standard Ethernet MTU:
 
-The **maximum segment size** is derived the same way TCP's is:
-
+```text
+P7_MSS = 1500 (MTU) − 20 (IPv4) − 8 (UDP) − 16 (P7 Header) = 1456 bytes
 ```
-P7_MSS = P7_MTU (1500) − UDP header (8) − IPv4 header (20) − P7 header (12) = 1460 bytes
-```
+
+---
 
 ## How It Works
 
-**No handshake, yet.** The receiver starts counting from whatever `seq_num` the first datagram it accepts carries; there's no SYN/SYN-ACK/ACK exchange establishing an initial sequence number. See [Roadmap](#roadmap).
+### Sender Pipeline
+1. **Window Filling:** Computes in-flight bytes as `new_seq - base`. While `in_flight < (P7_WINDOW_SIZE * P7_MSS)`, reads file chunks and immediately transmits them via `sendto()`.
+2. **Event Loop (`poll`):** Listens with a 50ms timeout.
+   - **On incoming ACK (`activity > 0`):** Advances `base` cumulatively. Parses the 32-bit `ack_mask` to mark out-of-order buffered slots as acknowledged (`is_acked = 1`).
+   - **Fast Retransmit:** Tracks consecutive duplicate ACKs. Upon reaching 3 dup-ACKs, immediately retransmits the missing slot without waiting for a timeout.
+   - **On Timeout (`activity == 0`):** Scans active in-flight slots and retransmits only unacknowledged segments whose `send_time_ms` exceeded the RTO threshold.
 
-**Sender** reads the file into one of two alternating buffers and always sends the *previous* chunk, holding the current one back — this one-chunk lookahead is what lets it know, once `fread` hits EOF, that the segment it's about to send is the last one, so it can set the `FIN` flag on that same segment instead of sending an empty FIN packet afterward. Each segment is sent with a bounded number of retries (5) against a fixed timeout (1s via `SO_RCVTIMEO`); an ACK is only accepted if `ack_num` exactly equals the byte offset just sent — a stray or delayed ACK for a different offset is ignored, not treated as confirmation.
+### Receiver & Reassembly
+1. Validates the one's-complement checksum (corrupted packets are dropped silently).
+2. Segments falling within the receive window are stored in their corresponding slot (`is_received = 1`).
+3. **Sequential Disk Flush:** Continuously drains consecutive received slots to disk starting from `expected_seq`. Halts upon encountering the first gap.
+4. Generates a cumulative `ack_num` (pointing to the gap) combined with an `ack_mask` representing out-of-order segments buffered ahead of the gap.
 
-**Receiver** validates the checksum on every incoming datagram (a mismatch is logged and dropped silently) and de-duplicates on `seq_num`: a segment is only appended to the output file if its sequence number matches the receiver's current expected offset, but an ACK for the current offset is sent either way — which is what lets the sender's retransmission recover a lost ACK without the receiver double-writing data.
+### Teardown (TIME_WAIT)
+- The sender sets the `FIN` flag on the final data chunk using double-buffering lookahead.
+- Upon receiving `FIN` and flushing all data, the receiver transmits the final ACK and enters a `TIME_WAIT` loop. It stays active for several seconds, re-answering any duplicate FIN segments in case its final ACK was dropped.
 
-**Teardown** is closer to TCP's `TIME_WAIT` than a clean handshake: once the receiver sees the `FIN` flag, it writes the last chunk, sends the final cumulative ACK, and then — instead of exiting — sits in `wait_double_fin` for a few seconds. If that final ACK was itself lost, the sender's stop-and-wait logic will retransmit the FIN segment, and the receiver re-sends the ACK instead of leaving the sender stuck retrying against silence.
-
-```
-Sender                                          Receiver
-  |                                                 |
-  |------ DATA  seq=0     len=1460  --------------> |
-  |<----------------- ACK  ack=1460 ----------------|
-  |------ DATA  seq=1460  len=1460  --------------> |
-  |<----------------- ACK  ack=2920 ----------------|
-  |                        ...                      |
-  |------ DATA+FIN  seq=N  len=k    --------------> |   last chunk — FIN piggybacked
-  |<----------------- ACK  ack=N+k -----------------|   final ACK
-  |                                                 |   receiver enters wait_double_fin
-  |  (final ACK lost — sender's timeout fires)      |
-  |------ DATA+FIN  seq=N  len=k    --------------> |   retransmit
-  |<----------------- ACK  ack=N+k -----------------|   receiver re-sends final ACK
-  |                                                 |   timeout with no further FIN → closed
-```
+---
 
 ## Getting Started
 
 ### Requirements
-
-- Linux (POSIX sockets, `SO_RCVTIMEO`)
-- GCC or Clang, `make`
-- Python 3 (only needed for the chaos-testing proxy in `tests/`)
-- `valgrind` (optional, for the memory-check targets)
+- Linux (x86_64 / arm64)
+- GCC or Clang (supporting C11), `make`
+- Python 3 (for chaos proxy and benchmark runner)
 
 ### Build
 
 ```bash
-make            # plain build -> ./protocol7
+make            # Optimized build -> ./protocol7
 make sanitize   # ASan + UBSan build -> ./protocol7-sanitized
 ```
 
-### Run a transfer
+### Quick Transfer
 
-Terminal 1 — receiver:
-
+Terminal 1 — Receiver:
 ```bash
-./protocol7 --recv --port 6767 --file received.bin
+./protocol7 -r -p 6767 -f received.bin
 ```
 
-Terminal 2 — sender:
-
+Terminal 2 — Sender:
 ```bash
-./protocol7 --send --port 6767 --file some_input.bin
+./protocol7 -s -H 127.0.0.1 -p 6767 -f input.bin
 ```
 
-The Makefile also exposes shortcuts for a quick local round-trip (`make recv`, `make send`, using `test.txt`) and `valgrind`-wrapped runs (`make valgrind-recv`, `make valgrind-send`).
+---
 
 ## CLI Reference
 
-Both sender and receiver share the same binary and option set; mode is selected with `--send`/`--recv`.
+Both sender and receiver run from the unified binary:
 
-| Short | Long       | Argument | Description                                                       |
-|-------|------------|----------|---------------------------------------------------------------------|
-| `-s`  | `--send`   | —        | Run as sender                                                      |
-| `-r`  | `--recv`   | —        | Run as receiver                                                    |
-| `-H`  | `--host`   | `HOST`   | Destination host (default: `127.0.0.1`)                           |
-| `-p`  | `--port`   | `PORT`   | UDP port                                                           |
-| `-x`  | `--hex`    | —        | Print a hex dump of every segment (debug)                          |
-| `-f`  | `--file`   | `FILE`   | File to send (send mode) or write to (receive mode)                |
-| `-h`  | `--help`   | —        | Show usage                                                         |
+| Flag | Long Flag | Parameter | Description                                              |
+|------|-----------|-----------|----------------------------------------------------------|
+| `-s` | `--send`  | —         | Run in sender mode.                                      |
+| `-r` | `--recv`  | —         | Run in receiver mode.                                    |
+| `-H` | `--host`  | `HOST`    | Destination host address (default: `127.0.0.1`).         |
+| `-p` | `--port`  | `PORT`    | UDP port.                                                |
+| `-f` | `--file`  | `FILE`    | Source file (send mode) or destination path (recv mode). |
+| `-x` | `--hex`   | —         | Print hex dump of transmitted packets (debug).           |
+| `-h` | `--help`  | —         | Show CLI help.                                           |
 
-## Chaos Testing
+---
 
-`tests/proxy.py` sits between sender and receiver as a UDP relay and can selectively misbehave, so reliability logic can be exercised against a channel that actually drops, duplicates, and corrupts traffic instead of trusting `localhost` to behave.
+## Chaos Testing & Benchmarks
+
+The Python proxy (`tests/proxy.py`) sits between sender and receiver to inject simulated network impairments:
 
 ```bash
 python3 tests/proxy.py --aport 5656 --bport 6767 --mode drop
 ```
 
-| Mode      | Behavior                                                                 |
-|-----------|---------------------------------------------------------------------------|
-| `normal`  | Pure relay, no interference                                              |
-| `drop`    | Drops ~30% of datagrams in transit                                       |
-| `corrupt` | Flips a random byte in ~30% of datagrams before forwarding (should be caught by the checksum) |
-| `double`  | Duplicates ~30% of datagrams, delivering each twice                     |
+| Mode      | Impairment Simulation                                          |
+|-----------|----------------------------------------------------------------|
+| `normal`  | Transparent bidirectional proxying.                            |
+| `drop`    | Randomly drops of datagrams.                                   |
+| `corrupt` | Inverts random payload bits (triggers checksum drops).         |
+| `double`  | Re-delivers datagram duplicates (tests receiver de-duplication). |
 
-Point the receiver at `--port 6767` and the sender at `--port 5656 --host 127.0.0.1` (the proxy's listening port) so traffic flows `sender → proxy → receiver`, with ACKs relayed back the other way.
+### Benchmark Results (10 MB Payload, Window = 32)
+
+```text
+=== RESULT TABLE ===
+Mode       | Size (MB)  | Impairment           | Time (s)   | Speed (MB/s)    | Integrity
+-------------------------------------------------------------------------------------
+NORMAL     | 10         | None                 | 0.151      | 66.19           | PASS
+DROP       | 10         | Drop: 5%             | 5.403      | 1.85            | PASS
+DROP       | 10         | Drop: 15%            | 121.971    | 0.08            | PASS
+CORRUPT    | 10         | Corrupt: 5%          | 16.683     | 0.60            | PASS
+DOUBLE     | 10         | Double: 10%          | 0.197      | 50.74           | PASS
+```
+
+---
 
 ## Verification
 
-- **Sanitizers**: the `sanitize` Makefile target builds both binaries with `-fsanitize=address,undefined` for the same test runs.
-- **Memory safety**: both sender and receiver run clean under `valgrind --leak-check=full --track-origins=yes` — 0 leaks, 0 errors.
-- **Data integrity**: transfers of both text and binary (`.jpg`) files are checked byte-for-byte with `diff` and `sha256sum` after each run, including under the `drop` / `corrupt` / `double` proxy modes.
+- **Data Integrity:** Byte-for-byte fidelity confirmed via `diff` and `sha256sum` across all impairment modes.
+- **Memory Cleanliness:** 0 memory leaks, 0 uninitialized byte access reported under `valgrind --leak-check=full` and ASan.
+
+---
 
 ## Project Layout
 
-```
+```text
 protocol-7/
-├── include/            # public headers
-│   ├── header.h        # wire-format struct + (de)serialization
-│   ├── checksum.h       # one's-complement checksum
-│   ├── args.h           # CLI option table + config struct
-│   ├── socket_utils.h   # UDP socket setup, session struct
-│   ├── sender.h
-│   ├── receiver.h
-│   └── debug.h          # segment logging / hex dump
-├── src/                # implementation, mirrors include/
+├── include/            # C Header files
+│   ├── header.h        # 16-byte wire-format definition & serialization
+│   ├── checksum.h      # Word-aligned one's-complement checksum
+│   ├── args.h          # Command-line parsing
+│   ├── socket_utils.h  # POSIX UDP socket wrappers
+│   ├── sender.h        # Sliding window, poll reactor, retransmission
+│   ├── receiver.h      # Receive buffer queue, sequential file sink
+│   └── debug.h         # Colorized timestamp logging & hex dumps
+├── src/                # Implementation sources
 ├── tests/
-│   └── proxy.py         # chaos-testing UDP relay
-├── Makefile             # plain + ASan/UBSan builds, valgrind targets
+│   ├── proxy.py        # Python chaos proxy (drop/corrupt/double)
+│   └── benchmark.py    # Automated test runner
+├── Makefile            # Targets: default, sanitize, valgrind
 └── LICENSE
 ```
 
+---
+
 ## Roadmap
 
-### Toward MVP
+- [ ] 3-Way Handshake (`SYN` / `SYN-ACK` / `ACK`) with randomized Initial Sequence Numbers (ISN).
+- [ ] Congestion Control (Slow Start, AIMD / Reno-like dynamics).
+- [ ] Jacobson/Karels dynamic RTT estimation and adaptive RTO calculation.
+- [ ] Silly Window Syndrome avoidance (Nagle's and Clark's algorithms).
+- [ ] Connection demultiplexing (concurrent multi-client sessions over a single socket).
 
-- [ ] Sliding window — replace the current strict stop-and-wait with Go-Back-N or Selective Repeat
-- [ ] 3-way handshake (`SYN` / `SYN-ACK` / `ACK`) — explicit connection establishment instead of accepting the first datagram's sequence number as-is
-
-### Backlog / stretch (post-MVP)
-
-- [ ] Multi-client support via hash-table demux — one socket, many concurrent sessions
-- [ ] Congestion control (slow start / AIMD)
-- [ ] Full duplex
-- [ ] `send()`/`recv()` library API, so applications can sit on top of the protocol rather than only via the CLI
-- [ ] CRC32 as an alternative/addition to the current checksum
-- [ ] A demonstration of resistance (or lack thereof) to head-of-line blocking compared to TCP
-- [ ] Benchmarks against TCP Reno in explicit, honestly-described scenarios (lossy channel, header overhead)
+---
 
 ## Known Limitations
 
-Worth being upfront about, since this is a prototype:
+- **Fixed Window Size:** Window size is statically set to 32 slots; lacks dynamic window scaling (`wscale`).
+- **No Handshake:** Transfers begin immediately with implicit stream initialization.
+- **Single Session:** The receiver accepts datagrams from one client per process lifetime.
+- **IPv4 Only:** No IPv6 socket support.
 
-- Single segment in flight at a time — no window, so throughput is bounded by RTT
-- No handshake — a receiver process starts trusting the first sequence number it sees
-- One client per receiver process — no session demultiplexing yet
-- IPv4 only
-- No encryption or authentication of any kind
+---
 
 ## License
 
